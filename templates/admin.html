@@ -104,6 +104,18 @@ textarea:focus{outline:none;border-color:var(--accent)}
 .badge-action{display:inline-block;padding:.15rem .5rem;border-radius:20px;font-size:.72rem;font-weight:600;background:var(--panel2);border:1px dashed var(--border)}
 .audit-clickable{cursor:pointer}
 .audit-clickable:hover td{background:var(--panel2)}
+.docs{max-width:760px}
+.docs h2{font-size:1.05rem;margin:1.6rem 0 .6rem;padding-bottom:.4rem;border-bottom:1px dashed var(--border)}
+.docs h2:first-child{margin-top:0}
+.docs h3{font-size:.9rem;margin:1.1rem 0 .4rem}
+.docs p{color:var(--muted);font-size:.88rem;line-height:1.55;margin:.4rem 0}
+.docs ul{margin:.4rem 0 .6rem 1.2rem;color:var(--muted);font-size:.88rem;line-height:1.7}
+.docs code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem;background:var(--panel2);padding:.12rem .35rem;border-radius:4px}
+.docs pre{background:var(--panel2);border:1px dashed var(--border);border-radius:8px;padding:.8rem 1rem;overflow-x:auto;margin:.5rem 0}
+.docs pre code{background:none;padding:0;font-size:.8rem;line-height:1.5}
+.docs table{width:100%;border-collapse:collapse;margin:.6rem 0;font-size:.85rem}
+.docs table th,.docs table td{text-align:left;padding:.5rem .7rem;border-bottom:1px dashed var(--border);color:var(--muted)}
+.docs table th{color:var(--muted);font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}
 </style>
 </head>
 <body>
@@ -143,6 +155,10 @@ textarea:focus{outline:none;border-color:var(--accent)}
     <a href="#" data-view="audit">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/></svg>
       Audit
+    </a>
+    <a href="#" data-view="docs">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      Docs
     </a>
   </nav>
   <div class="foot">
@@ -223,6 +239,60 @@ textarea:focus{outline:none;border-color:var(--accent)}
     </table>
     <div class="empty" id="audit-empty" style="display:none">No audit entries yet.</div>
     <div class="pager" id="audit-pager"></div>
+  </div>
+
+  <div id="view-docs" style="display:none">
+    <div class="topbar">
+      <div><h1>Docs</h1><div class="meta">API usage and web features</div></div>
+    </div>
+    <div class="docs">
+      <h2>Authentication</h2>
+      <p>All API endpoints require a bearer token, sent in the <code>Authorization</code> header:</p>
+      <pre><code>Authorization: Bearer $TOKEN</code></pre>
+
+      <h2>Upload API</h2>
+      <table>
+        <thead><tr><th>Endpoint</th><th>Method</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>/upload</code></td><td>POST / PUT</td><td>Upload a single file</td></tr>
+          <tr><td><code>/</code> (any path)</td><td>non-GET</td><td>Accept-and-log sink for any request</td></tr>
+        </tbody>
+      </table>
+      <h3>Multipart form</h3>
+      <pre><code>curl -H "Authorization: Bearer $TOKEN" -F "file=@myfile.txt" http://host/upload</code></pre>
+      <h3>PUT raw body</h3>
+      <pre><code>curl -H "Authorization: Bearer $TOKEN" -T myfile.txt http://host/upload</code></pre>
+      <h3>POST raw body with filename</h3>
+      <pre><code>curl -H "Authorization: Bearer $TOKEN" --data-binary @myfile.txt "http://host/upload?name=myfile.txt"</code></pre>
+      <p>The original filename is resolved from the multipart part, a <code>Content-Disposition</code> header, the <code>?name=</code> query param, or falls back to <code>upload-&lt;unix-timestamp&gt;</code>.</p>
+
+      <h3>Response</h3>
+      <pre><code>{
+  "status": "ok",
+  "message": "File received",
+  "size": 1048576,
+  "quarantined": false,
+  "timestamp": "2026-08-20T15:04:05Z"
+}</code></pre>
+      <p>The stored filename is never returned.</p>
+
+      <h2>Web Features</h2>
+      <ul>
+        <li><strong>Files</strong> — browse, search, download, and delete uploaded files, with per-file status and uploader IP.</li>
+        <li><strong>Settings</strong> — hot-reload upload directory, max upload size, bearer token, quarantine extensions, and admin password.</li>
+        <li><strong>Audit</strong> — paginated log of every login, upload, settings change, and file action.</li>
+        <li><strong>Dark / light theme</strong> — toggled from the sidebar, persisted in your browser.</li>
+      </ul>
+
+      <h2>Security</h2>
+      <ul>
+        <li>Bearer-token auth with constant-time comparison.</li>
+        <li>Dangerous extensions are quarantined with a <code>.quarantined</code> suffix.</li>
+        <li>Saved files are <code>chmod 0644</code> — execute bits stripped.</li>
+        <li>Filenames are sanitized against path traversal; uploads stream to disk with a size cap.</li>
+        <li>Admin sessions use a CSRF token plus an HttpOnly, SameSite=Strict cookie.</li>
+      </ul>
+    </div>
   </div>
 </div>
 {{end}}
@@ -351,6 +421,7 @@ function switchView(view) {
   document.getElementById('view-files').style.display = view === 'files' ? '' : 'none';
   document.getElementById('view-settings').style.display = view === 'settings' ? '' : 'none';
   document.getElementById('view-audit').style.display = view === 'audit' ? '' : 'none';
+  document.getElementById('view-docs').style.display = view === 'docs' ? '' : 'none';
   if (view === 'settings') loadSettings();
   if (view === 'files') loadFiles();
   if (view === 'audit') loadAudit(1);
