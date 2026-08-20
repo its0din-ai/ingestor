@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# deploy.sh — build a static binary and deploy ingestor (binary, templates,
-# and .env) to a target directory or remote host.
+# deploy.sh — build, deploy, and run ingestor in the background with
+# auto-restart. Running it with no arguments rebuilds, redeploys, and
+# (re)starts the app so it keeps serving forever.
 
 APP="ingestor"
 BUILD_DIR="dist"
 TEMPLATES="templates"
 ENV_FILE=".env"
 ENV_EXAMPLE=".env.example"
+PID_FILE=".ingestor.pid"
+LOG_FILE="ingestor.log"
 
 # Remote deployment (optional). Leave DEPLOY_HOST empty for local-only.
 #   DEPLOY_HOST="user@host" DEPLOY_PATH="/opt/ingestor" ./deploy.sh
@@ -16,10 +19,16 @@ DEPLOY_HOST="${DEPLOY_HOST:-}"
 DEPLOY_PATH="${DEPLOY_PATH:-/opt/$APP}"
 
 usage() {
-  echo "Usage: ./deploy.sh [build|deploy|systemd]"
-  echo "  build    Build a static binary into $BUILD_DIR/ (default)"
-  echo "  deploy   Build, then copy to \$DEPLOY_PATH (local or remote via \$DEPLOY_HOST)"
-  echo "  systemd  Emit a systemd unit for ingestor"
+  echo "Usage: ./deploy.sh [build|deploy|run|stop|restart|status|logs|systemd]"
+  echo "  (no args)  build + deploy + run in background (auto-restart)"
+  echo "  build      Build a static binary into $BUILD_DIR/"
+  echo "  deploy     Build, then copy to \$DEPLOY_PATH (local or remote via \$DEPLOY_HOST)"
+  echo "  run        Build + deploy + (re)start the supervised background process"
+  echo "  stop       Stop the background process"
+  echo "  restart    Stop + start (no rebuild)"
+  echo "  status     Show whether the app is running"
+  echo "  logs       Tail the app log"
+  echo "  systemd    Emit a systemd unit for ingestor"
 }
 
 build() {
@@ -59,6 +68,84 @@ deploy() {
   echo "    If this is a new install, copy $DEPLOY_PATH/$ENV_EXAMPLE to $DEPLOY_PATH/$ENV_FILE and set your secrets."
 }
 
+remote_cmd() {
+  ssh "$DEPLOY_HOST" "$1"
+}
+
+run_remote() {
+  local run_dir="$DEPLOY_PATH"
+  stop
+  echo "==> Starting supervised process on $DEPLOY_HOST"
+  remote_cmd "cd '$run_dir' && nohup sh -c 'while true; do ./$APP >> $LOG_FILE 2>&1; sleep 2; done' >/dev/null 2>&1 & echo \$! > '$run_dir/$PID_FILE'"
+  echo "==> Started. PID on remote host:"
+  remote_cmd "cat '$run_dir/$PID_FILE'"
+}
+
+run_local() {
+  local run_dir="$DEPLOY_PATH"
+  stop
+  echo "==> Starting supervised process in $run_dir"
+  (
+    cd "$run_dir"
+    nohup sh -c 'while true; do ./ingestor >> ingestor.log 2>&1; sleep 2; done' >/dev/null 2>&1 &
+    echo $! > "$PID_FILE"
+  )
+  sleep 1
+  if [[ -f "$run_dir/$PID_FILE" ]]; then
+    echo "==> Started. Supervisor PID: $(cat "$run_dir/$PID_FILE")"
+  fi
+}
+
+run() {
+  deploy
+  if [[ -n "$DEPLOY_HOST" ]]; then
+    run_remote
+  else
+    run_local
+  fi
+}
+
+stop() {
+  if [[ -n "$DEPLOY_HOST" ]]; then
+    remote_cmd "if [ -f '$DEPLOY_PATH/$PID_FILE' ]; then kill \$(cat '$DEPLOY_PATH/$PID_FILE') 2>/dev/null || true; fi; pkill -f '$DEPLOY_PATH/$APP' 2>/dev/null || true"
+  else
+    if [[ -f "$DEPLOY_PATH/$PID_FILE" ]]; then
+      kill "$(cat "$DEPLOY_PATH/$PID_FILE")" 2>/dev/null || true
+      rm -f "$DEPLOY_PATH/$PID_FILE"
+    fi
+    pkill -f "$DEPLOY_PATH/$APP" 2>/dev/null || true
+  fi
+  echo "==> Stopped."
+}
+
+restart() {
+  if [[ -n "$DEPLOY_HOST" ]]; then
+    run_remote
+  else
+    run_local
+  fi
+}
+
+status() {
+  if [[ -n "$DEPLOY_HOST" ]]; then
+    remote_cmd "if [ -f '$DEPLOY_PATH/$PID_FILE' ] && kill -0 \$(cat '$DEPLOY_PATH/$PID_FILE') 2>/dev/null; then echo running; else echo stopped; fi"
+    return
+  fi
+  if [[ -f "$DEPLOY_PATH/$PID_FILE" ]] && kill -0 "$(cat "$DEPLOY_PATH/$PID_FILE")" 2>/dev/null; then
+    echo "running (supervisor PID $(cat "$DEPLOY_PATH/$PID_FILE"))"
+  else
+    echo "stopped"
+  fi
+}
+
+logs() {
+  if [[ -n "$DEPLOY_HOST" ]]; then
+    remote_cmd "tail -n 50 -f '$DEPLOY_PATH/$LOG_FILE'"
+  else
+    tail -n 50 -f "$DEPLOY_PATH/$LOG_FILE"
+  fi
+}
+
 systemd_unit() {
   cat <<EOF
 [Unit]
@@ -79,12 +166,27 @@ WantedBy=multi-user.target
 EOF
 }
 
-case "${1:-build}" in
+case "${1:-run}" in
   build)
     build
     ;;
   deploy)
     deploy
+    ;;
+  run)
+    run
+    ;;
+  stop)
+    stop
+    ;;
+  restart)
+    restart
+    ;;
+  status)
+    status
+    ;;
+  logs)
+    logs
     ;;
   systemd)
     systemd_unit

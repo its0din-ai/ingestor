@@ -16,7 +16,7 @@
 | 6 | Secure file naming | `{base}_{rand_hex_6}.{ext}` (safe) or `{base}_{rand_hex_6}.{ext}.quarantined` (quarantined) |
 | 7 | JSON REST response | Returns `{"status","message","size","quarantined","timestamp"}` — never reflects saved filename |
 | 8 | Web admin UI | File-manager dashboard (list/download/delete files) + settings form; dark/light theme |
-| 9 | Admin auth | Separate admin password, session-based, localhost-only access |
+| 9 | Admin auth | Separate admin password, session-based |
 | 10 | Config storage | `.env` for bootstrap secrets; SQLite for runtime settings (hot-reloadable via admin UI) |
 | 11 | Upload limit | 2 GB max |
 | 12 | No framework | Pure `net/http` + stdlib, minimal dependencies |
@@ -219,8 +219,8 @@ dashboard). The stored name is never returned by the public upload API.
 |---|---|---|---|
 | `/` | GET | none | Redirect to `/dashboard/` if session valid, else `/login` |
 | `/` | other | Bearer | Accept-and-log-everything upload sink |
-| `/login` | GET/POST | Public (loopback + CSRF) | Login form / authenticate |
-| `/logout` | POST | Public (loopback + CSRF) | Destroy session |
+| `/login` | GET/POST | Public (CSRF) | Login form / authenticate |
+| `/logout` | POST | Public (CSRF) | Destroy session |
 | `/dashboard/` | GET | Session | File manager dashboard |
 | `/dashboard/api/files` | GET | Session | JSON file list (name, size, modified, quarantined, uploader_ip) |
 | `/dashboard/download` | GET | Session | Download a stored file |
@@ -233,8 +233,8 @@ dashboard). The stored name is never returned by the public upload API.
 
 ### Admin Middleware (`internal/auth/admin.go`)
 
-- `Admin` middleware applies to `/dashboard/*`: loopback-only + session cookie + CSRF
-- `Public` middleware applies to `/login` and `/logout`: loopback-only + CSRF, no session
+- `Admin` middleware applies to `/dashboard/*`: session cookie + CSRF
+- `Public` middleware applies to `/login` and `/logout`: CSRF, no session
 - Login flow:
   1. `GET /login` — render login form (with CSRF token)
   2. `POST /login` — bcrypt-compare password against `admin_password_hash`, create session row, set cookie
@@ -395,9 +395,9 @@ Fields: `time`, `level`, `msg`, `method`, `path`, `status`, `bytes`, `duration_m
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/login` | Public (loopback + CSRF) | Login form |
-| POST | `/login` | Public (loopback + CSRF) | Authenticate, create session |
-| POST | `/logout` | Public (loopback + CSRF) | Destroy session |
+| GET | `/login` | Public (CSRF) | Login form |
+| POST | `/login` | Public (CSRF) | Authenticate, create session |
+| POST | `/logout` | Public (CSRF) | Destroy session |
 | GET | `/dashboard/` | Session | File manager dashboard |
 | GET | `/dashboard/api/files` | Session | JSON file list (name, size, modified, quarantined, uploader_ip) |
 | GET | `/dashboard/download` | Session | Download a stored file |
@@ -456,7 +456,7 @@ in-memory config is refreshed, so no restart is required. Non-secret fields writ
 | Threat | Mitigation | Location |
 |---|---|---|
 | Unauthorized access | Bearer token on all API endpoints | `internal/auth/bearer.go` |
-| Admin UI from network | Loopback-only + session cookie | `internal/auth/admin.go` |
+| Admin UI access | Session cookie + CSRF (publishable, no loopback restriction) | `internal/auth/admin.go` |
 | Web shell upload | Extension blacklist (all extensions checked) + `.quarantined` suffix | `internal/quarantine/quarantine.go` |
 | Execute permissions | `os.Chmod(file, 0644)` on all saved files | `internal/upload/handler.go` |
 | Path traversal | Sanitize filenames: strip `../`, `\`, drive prefixes, null bytes, control chars | `internal/upload/handler.go` |

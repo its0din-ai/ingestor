@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
-	"net"
 	"net/http"
 	"time"
 
@@ -23,19 +22,11 @@ type ctxKey int
 
 const csrfKey ctxKey = 0
 
-// Admin guards the dashboard routes: loopback-only, session cookie required,
-// and CSRF check on mutating requests.
+// Admin guards the dashboard routes: session cookie required and CSRF check
+// on mutating requests.
 func Admin(conn *sql.DB) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !isLoopback(r.RemoteAddr) {
-				web.JSON(w, http.StatusForbidden, web.ErrorResponse{
-					Status:  "error",
-					Message: "admin is loopback-only",
-				})
-				return
-			}
-
 			if !validSession(conn, r) {
 				http.Redirect(w, r, "/login", http.StatusSeeOther)
 				return
@@ -68,19 +59,10 @@ func Root(conn *sql.DB) http.HandlerFunc {
 	}
 }
 
-// Public guards the login/logout routes: loopback-only and CSRF, but no
-// session requirement.
+// Public guards the login/logout routes with CSRF, but no session requirement.
 func Public(conn *sql.DB) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !isLoopback(r.RemoteAddr) {
-				web.JSON(w, http.StatusForbidden, web.ErrorResponse{
-					Status:  "error",
-					Message: "admin is loopback-only",
-				})
-				return
-			}
-
 			csrf, ok := csrfToken(r, w)
 			if !ok {
 				web.JSON(w, http.StatusForbidden, web.ErrorResponse{
@@ -94,15 +76,6 @@ func Public(conn *sql.DB) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-func isLoopback(remoteAddr string) bool {
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
-		host = remoteAddr
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 func validSession(conn *sql.DB, r *http.Request) bool {
