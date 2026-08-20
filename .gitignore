@@ -1,0 +1,30 @@
+# Environment
+.env
+
+# Database
+data/
+
+# Uploads
+uploads/
+
+# Build artifacts
+ingestor
+ingestor.exe
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go
+/vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
