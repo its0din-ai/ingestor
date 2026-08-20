@@ -28,6 +28,14 @@ var migrations = []string{
 		remote_addr   TEXT NOT NULL,
 		created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);`,
+	`CREATE TABLE IF NOT EXISTS audit_log (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		action      TEXT NOT NULL,
+		summary     TEXT NOT NULL,
+		detail      TEXT NOT NULL DEFAULT '',
+		remote_addr TEXT NOT NULL,
+		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);`,
 }
 
 func Open(path string) (*sql.DB, error) {
@@ -156,4 +164,48 @@ func ListUploads(conn *sql.DB, limit, offset int) ([]UploadRecord, error) {
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+type AuditRecord struct {
+	ID         int64
+	Action     string
+	Summary    string
+	Detail     string
+	RemoteAddr string
+	CreatedAt  time.Time
+}
+
+func InsertAudit(conn *sql.DB, r AuditRecord) error {
+	_, err := conn.Exec(
+		`INSERT INTO audit_log (action, summary, detail, remote_addr, created_at) VALUES (?, ?, ?, ?, ?)`,
+		r.Action, r.Summary, r.Detail, r.RemoteAddr, r.CreatedAt,
+	)
+	return err
+}
+
+func ListAudit(conn *sql.DB, limit, offset int) ([]AuditRecord, error) {
+	rows, err := conn.Query(
+		`SELECT id, action, summary, detail, remote_addr, created_at FROM audit_log ORDER BY id DESC LIMIT ? OFFSET ?`,
+		limit, offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []AuditRecord
+	for rows.Next() {
+		var a AuditRecord
+		if err := rows.Scan(&a.ID, &a.Action, &a.Summary, &a.Detail, &a.RemoteAddr, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func CountAudit(conn *sql.DB) (int64, error) {
+	var n int64
+	err := conn.QueryRow(`SELECT COUNT(*) FROM audit_log`).Scan(&n)
+	return n, err
 }

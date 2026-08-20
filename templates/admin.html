@@ -86,10 +86,24 @@ textarea{width:100%;padding:.6rem .7rem;background:var(--panel2);border:1px dash
 textarea:focus{outline:none;border-color:var(--accent)}
 .field-row{display:flex;gap:.8rem}
 .field-row .field{flex:1}
+.copy-row{display:flex;gap:.5rem}
+.copy-row input{flex:1}
+.copy-btn{flex-shrink:0;padding:.6rem .9rem;border-radius:8px;font-size:.85rem;font-weight:600;white-space:nowrap}
 
 .toast{position:fixed;bottom:1.5rem;right:1.5rem;background:var(--panel2);border:1px dashed var(--border);border-left:3px dashed var(--ok);padding:.8rem 1.1rem;border-radius:8px;font-size:.9rem;box-shadow:0 6px 24px var(--shadow);animation:slide .2s ease}
 .toast.err{border-left-color:var(--danger)}
 @keyframes slide{from{transform:translateY(10px);opacity:0}to{transform:none;opacity:1}}
+
+.pager{display:flex;align-items:center;gap:.6rem;margin-top:1rem;justify-content:flex-end}
+.pager .info{color:var(--muted);font-size:.85rem;margin-right:.4rem}
+.pager button{padding:.4rem .8rem;border-radius:6px;border:1px dashed var(--border);background:var(--panel2);font-size:.85rem}
+.pager button:disabled{opacity:.4;cursor:default}
+.pager button:not(:disabled):hover{background:var(--border)}
+.audit-detail-row td{padding:0 1rem 1rem 1rem;border-bottom:1px dashed var(--border)}
+.audit-detail{background:var(--panel2);border:1px dashed var(--border);border-radius:6px;padding:.7rem .9rem;font-size:.82rem;white-space:pre-wrap;word-break:break-all}
+.badge-action{display:inline-block;padding:.15rem .5rem;border-radius:20px;font-size:.72rem;font-weight:600;background:var(--panel2);border:1px dashed var(--border)}
+.audit-clickable{cursor:pointer}
+.audit-clickable:hover td{background:var(--panel2)}
 </style>
 </head>
 <body>
@@ -125,6 +139,10 @@ textarea:focus{outline:none;border-color:var(--accent)}
     <a href="#" data-view="settings">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       Settings
+    </a>
+    <a href="#" data-view="audit">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/></svg>
+      Audit
     </a>
   </nav>
   <div class="foot">
@@ -175,7 +193,10 @@ textarea:focus{outline:none;border-color:var(--accent)}
         </div>
         <div class="field">
           <label>Bearer token</label>
-          <input type="password" id="s-bearer_token">
+          <div class="copy-row">
+            <input type="password" id="s-bearer_token">
+            <button type="button" class="btn-ghost copy-btn" onclick="copyBearer()">Copy</button>
+          </div>
         </div>
       </div>
       <div class="field">
@@ -189,6 +210,19 @@ textarea:focus{outline:none;border-color:var(--accent)}
       </div>
       <button class="btn btn-primary" onclick="saveSettings()">Save settings</button>
     </div>
+  </div>
+
+  <div id="view-audit" style="display:none">
+    <div class="topbar">
+      <div><h1>Audit Log</h1><div class="meta">All actions performed on this server</div></div>
+      <button class="btn btn-ghost" onclick="loadAudit()">Refresh</button>
+    </div>
+    <table class="files-table">
+      <thead><tr><th>Time</th><th>Action</th><th>Summary</th><th>Remote IP</th></tr></thead>
+      <tbody id="audit-body"></tbody>
+    </table>
+    <div class="empty" id="audit-empty" style="display:none">No audit entries yet.</div>
+    <div class="pager" id="audit-pager"></div>
   </div>
 </div>
 {{end}}
@@ -316,12 +350,83 @@ function switchView(view) {
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === view));
   document.getElementById('view-files').style.display = view === 'files' ? '' : 'none';
   document.getElementById('view-settings').style.display = view === 'settings' ? '' : 'none';
+  document.getElementById('view-audit').style.display = view === 'audit' ? '' : 'none';
   if (view === 'settings') loadSettings();
   if (view === 'files') loadFiles();
+  if (view === 'audit') loadAudit(1);
+}
+
+function copyBearer() {
+  const el = document.getElementById('s-bearer_token');
+  navigator.clipboard.writeText(el.value).then(() => toast('Bearer token copied'));
 }
 
 function logout() {
   fetch('/logout', {method: 'POST', headers: {'X-CSRF-Token': csrf}}).finally(() => location.href = '/login');
+}
+
+let auditPage = 1;
+let auditTotalPages = 1;
+
+async function loadAudit(page) {
+  if (page) auditPage = page;
+  try {
+    const res = await fetch('/dashboard/api/audit?page=' + auditPage);
+    const data = await res.json();
+    auditTotalPages = data.total_pages || 1;
+    renderAudit(data.entries || []);
+    renderAuditPager(data);
+  } catch (e) {
+    toast('Failed to load audit log', true);
+  }
+}
+
+function renderAudit(entries) {
+  const body = document.getElementById('audit-body');
+  const empty = document.getElementById('audit-empty');
+  body.innerHTML = '';
+  empty.style.display = entries.length ? 'none' : 'block';
+  for (const a of entries) {
+    const tr = document.createElement('tr');
+    tr.className = 'audit-clickable';
+    tr.onclick = () => toggleAuditDetail(tr, a);
+    tr.innerHTML =
+      '<td>' + fmtTime(a.created_at) + '</td>' +
+      '<td><span class="badge-action">' + esc(a.action) + '</span></td>' +
+      '<td>' + esc(a.summary) + '</td>' +
+      '<td>' + esc(a.remote_addr || '') + '</td>';
+    body.appendChild(tr);
+    if (a.detail) {
+      const det = document.createElement('tr');
+      det.className = 'audit-detail-row';
+      det.style.display = 'none';
+      det.innerHTML = '<td colspan="4"><div class="audit-detail">' + esc(prettyDetail(a.detail)) + '</div></td>';
+      body.appendChild(det);
+    }
+  }
+}
+
+function toggleAuditDetail(row, a) {
+  const next = row.nextElementSibling;
+  if (next && next.classList.contains('audit-detail-row')) {
+    next.style.display = next.style.display === 'none' ? '' : 'none';
+  }
+}
+
+function prettyDetail(d) {
+  try { return JSON.stringify(JSON.parse(d), null, 2); } catch (e) { return d; }
+}
+
+function renderAuditPager(data) {
+  const pager = document.getElementById('audit-pager');
+  const page = data.page || 1;
+  const totalPages = data.total_pages || 1;
+  pager.innerHTML =
+    '<span class="info">Page ' + page + ' of ' + totalPages + ' (' + data.total + ' entries)</span>' +
+    '<button onclick="loadAudit(1)"' + (page <= 1 ? ' disabled' : '') + '>First</button>' +
+    '<button onclick="loadAudit(' + (page - 1) + ')"' + (page <= 1 ? ' disabled' : '') + '>Prev</button>' +
+    '<button onclick="loadAudit(' + (page + 1) + ')"' + (page >= totalPages ? ' disabled' : '') + '>Next</button>' +
+    '<button onclick="loadAudit(' + totalPages + ')"' + (page >= totalPages ? ' disabled' : '') + '>Last</button>';
 }
 
 document.querySelectorAll('.nav a').forEach(a => a.addEventListener('click', e => {

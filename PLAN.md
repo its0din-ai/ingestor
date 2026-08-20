@@ -2,6 +2,7 @@
 
 > A Go HTTP server that accepts file uploads from airgapped environments via curl (or any HTTP client),
 > logs all authenticated requests, and stores files with security hardening against web shell attacks.
+> Ships with a dark/light file-manager web dashboard for browsing, downloading, deleting, and configuring.
 
 ## Requirements Summary
 
@@ -12,9 +13,9 @@
 | 3 | File upload | Support multipart (`curl -F`), PUT raw body (`curl -T`), POST raw body (`curl --data-binary`) |
 | 4 | Strip execute bits | `os.Chmod(file, 0644)` on all saved files |
 | 5 | Web shell mitigation | Extension blacklist; matched files get `.quarantined` suffix appended |
-| 6 | Secure file naming | `{rand_hex_6}-{sanitized_name}` (safe) or `{rand_hex_6}-{sanitized_name}.quarantined` (quarantined) |
+| 6 | Secure file naming | `{base}_{rand_hex_6}.{ext}` (safe) or `{base}_{rand_hex_6}.{ext}.quarantined` (quarantined) |
 | 7 | JSON REST response | Returns `{"status","message","size","quarantined","timestamp"}` — never reflects saved filename |
-| 8 | Web admin UI | Config dashboard to change upload path, bearer token, admin password, quarantine list, max size |
+| 8 | Web admin UI | File-manager dashboard (list/download/delete files) + settings form; dark/light theme |
 | 9 | Admin auth | Separate admin password, session-based, localhost-only access |
 | 10 | Config storage | `.env` for bootstrap secrets; SQLite for runtime settings (hot-reloadable via admin UI) |
 | 11 | Upload limit | 2 GB max |
@@ -27,8 +28,8 @@
 - **Web UI access control**: Separate admin password (not same as bearer token)
 - **Config persistence**: `.env` for secrets, SQLite for runtime settings
 - **File size limit**: 2 GB
-- **Original filename handling**: Kept, prepended with random hex 6 bytes → `{rand_hex}-{sanitized_name}`
-- **Web shell mitigation**: Extension blacklist; quarantined files get `.quarantined` suffix → `{rand_hex}-{sanitized_name}.quarantined`
+- **Original filename handling**: Kept, with random hex 6 bytes appended after the base → `{base}_{rand}.{ext}`
+- **Web shell mitigation**: Extension blacklist; quarantined files get `.quarantined` suffix → `{base}_{rand}.{ext}.quarantined`
 - **Deployment**: Runs behind a reverse proxy at a configurable `host:port` (default `127.0.0.1:8080`); trusts `X-Real-IP`/`X-Forwarded-For` for client IP logging
 
 ---
@@ -50,19 +51,24 @@ ingestor/
 │   │   └── config.go             # Load .env, read/write SQLite settings, in-memory Config struct
 │   ├── auth/
 │   │   ├── bearer.go             # Bearer token middleware (crypto/subtle)
-│   │   └── admin.go              # Admin session middleware + login handler
+│   │   └── admin.go              # Session middleware (Admin/Public/Root), CSRF, session mgmt
 │   ├── upload/
-│   │   └── handler.go            # Multi-mode upload handler (multipart, PUT, POST raw)
+│   │   ├── handler.go            # Multi-mode upload handler (multipart, PUT, POST raw)
+│   │   └── handler_test.go       # sanitizeName + randomHex tests
 │   ├── quarantine/
-│   │   └── quarantine.go         # Extension blacklist check + .quarantined renaming
+│   │   ├── quarantine.go         # Extension blacklist check + .quarantined renaming
+│   │   └── quarantine_test.go    # Double-extension bypass tests
 │   ├── admin/
-│   │   └── handler.go            # Web UI: config dashboard, settings save, upload history
+│   │   ├── handler.go            # Login/logout, dashboard render, settings JSON endpoints
+│   │   └── files.go              # File list / download / delete endpoints
 │   ├── db/
-│   │   └── db.go                 # SQLite init, migrations, query helpers
-│   └── logging/
-│       └── middleware.go          # Request/response logging middleware
+│   │   └── db.go                 # SQLite init, migrations, sessions/upload query helpers
+│   ├── logging/
+│   │   └── middleware.go          # Request/response logging middleware + ClientIP
+│   └── web/
+│       └── respond.go            # JSON response helper + ErrorResponse type
 ├── templates/
-│   └── admin.html                # Go html/template — config dashboard
+│   └── admin.html                # Go html/template — login + file-manager dashboard UI
 └── data/                         # Created at runtime (gitignored)
     └── ingestor.db                 # SQLite database
 ```
@@ -282,9 +288,9 @@ Also supports:
    - If extension is on blacklist → append .quarantined suffix
 9. Generate random hex 6 bytes → 12 hex chars
 10. Construct final name:
-    - Safe:        {rand_hex}-{sanitized_name}
-    - Quarantined: {rand_hex}-{sanitized_name}.quarantined
-    (sanitized_name retains its original extension, e.g. "report.pdf" → "abc123-report.pdf")
+    - Safe:        {base}_{rand}.{ext}
+    - Quarantined: {base}_{rand}.{ext}.quarantined
+    (the extension is split via filepath.Ext and preserved, e.g. "report.pdf" → "report_abc123.pdf")
 11. Ensure upload_dir exists (os.MkdirAll with 0700) before writing temp
 12. os.Rename(tempFile, uploadDir/finalName) — same filesystem, atomic
 13. os.Chmod(finalPath, 0644) — belt and suspenders
@@ -368,22 +374,22 @@ func IsQuarantined(filename string, blacklist []string) bool {
 
 ### Request Logger Middleware
 
-Uses `log/slog` with a JSON handler. Wraps `http.Handler` and logs every request (authenticated or not — rejections are logged too, at WARN level):
+Uses `log/slog` with a JSON handler. Wraps `http.Handler` and logs every request (authenticated or not):
 
 ```json
-{"time":"2026-08-20T15:04:05Z","level":"INFO","msg":"request","method":"POST","path":"/upload","status":200,"bytes":1048576,"duration_ms":12,"remote":"192.168.1.100:54321"}
-{"time":"2026-08-20T15:04:06Z","level":"WARN","msg":"request","method":"POST","path":"/upload","status":200,"bytes":51200,"duration_ms":8,"remote":"192.168.1.100:54321","quarantined":true}
+{"time":"2026-08-20T15:04:05Z","level":"INFO","msg":"request","method":"POST","path":"/upload","status":200,"bytes":1048576,"duration_ms":12,"remote":"192.168.1.100"}
 ```
 
-Fields: `time`, `level`, `msg`, `method`, `path`, `status`, `bytes`, `duration_ms`, `remote`, plus optional `quarantined` and `unauthorized` flags.
+Fields: `time`, `level`, `msg`, `method`, `path`, `status`, `bytes`, `duration_ms`, `remote`.
 
 - Structured JSON (native `slog.JSONHandler`), one object per line, parseable by `jq`
 - The `Authorization` header and any bearer token are **never** logged
-- Uploads also log a separate `upload` event with `original_name`, `size`, `quarantined` (but never the saved filename)
+- Uploads also log a separate `upload` event with `original_name`, `size`, `quarantined`, `remote` (but never the saved filename)
+- `remote` is resolved via `ClientIP`, which honors `X-Real-IP` then the leftmost `X-Forwarded-For` entry (reverse-proxy forwarding), falling back to `RemoteAddr`
 
 ---
 
-## Web Admin UI (`internal/admin/handler.go` + `templates/admin.html`)
+## Web Admin UI (`internal/admin/handler.go` + `files.go` + `templates/admin.html`)
 
 ### Routes
 
@@ -399,27 +405,49 @@ Fields: `time`, `level`, `msg`, `method`, `path`, `status`, `bytes`, `duration_m
 | GET | `/dashboard/api/settings` | Session | Read settings |
 | POST | `/dashboard/api/settings` | Session | Save settings to SQLite, hot-reload |
 
-### Dashboard Fields (Editable)
+### UI Layout
+
+A single-page file manager with a left sidebar and two views:
+
+- **Sidebar** — brand ("ingestor" + status dot), nav links (**Files**, **Settings**), and a footer with the theme toggle and "Sign out".
+- **Files view** — topbar (title + current upload directory + Refresh), a search box filtering by filename, and a table of stored files.
+- **Settings view** — a card with the config form (see fields below).
+
+### Files Table Columns
+
+| Column | Source |
+|---|---|
+| Name | stored filename (monospace), clickable via download/delete actions |
+| Size | human-readable (`B`/`KB`/`MB`/`GB`) |
+| Modified | locale-formatted timestamp |
+| Status | `quarantined` (amber badge) or `ok` (green badge) |
+| Uploader IP | `upload_history.remote_addr` looked up by `stored_name` |
+| Actions | download + delete (delete confirms then POSTs with CSRF) |
+
+The randomized stored name is only shown here — never in the public upload response.
+
+### Theme & Styling
+
+- All borders are **dashed** (`1px dashed var(--border)`).
+- Two themes: **dark** (default) and **light** ("white mode"), toggled via the
+  `html.light` class. The choice is persisted in `localStorage` and applied on
+  load. Light mode overrides the CSS custom properties (`--bg`, `--panel`,
+  `--text`, `--border`, etc.) and badge tints.
+- Toast notifications (bottom-right) for success/error feedback; animation via
+  a `slide` keyframe.
+
+### Settings Form Fields (Editable)
 
 | Field | Type | Description |
 |---|---|---|
 | Upload Directory | text input | Absolute or relative path for file storage (SQLite) |
-| Bearer Token | password input (with reveal toggle) | API token; written back to `.env`, hot-reloaded in-memory |
-| Admin Password | password input | Replaced with fresh bcrypt hash in SQLite |
 | Max Upload Size (MB) | number input | Maximum allowed upload size (SQLite) |
+| Bearer Token | password input | API token; written back to `.env`, hot-reloaded in-memory |
 | Quarantine Extensions | textarea (comma-separated) | List of dangerous extensions (SQLite) |
+| New Admin Password | password input | Leave blank to keep current; replaced with fresh bcrypt hash |
 
 Secret fields (bearer token) are persisted to `.env` (rewriting only that key) and the
 in-memory config is refreshed, so no restart is required. Non-secret fields write to SQLite.
-
-### Files View
-
-The dashboard lists files in the upload directory with: stored name, size, modified
-time, quarantine status, **uploader IP** (looked up from `upload_history.stored_name`),
-and download/delete actions. The randomized stored name is only shown here — never in
-the public upload response.
-
-Does **not** show the randomized saved filename.
 
 ---
 
@@ -445,9 +473,6 @@ Does **not** show the randomized saved filename.
 ## Build & Run
 
 ```bash
-# Initialize module
-go mod init github.com/encrypt0r/ingestor
-
 # Install dependencies
 go get github.com/joho/godotenv
 go get modernc.org/sqlite
@@ -456,6 +481,9 @@ go get golang.org/x/crypto/bcrypt
 # Build (CGO disabled → static binary for airgapped copy)
 CGO_ENABLED=0 go build -o ingestor .
 
+# Test
+go test ./...
+
 # Run
 ./ingestor
 ```
@@ -463,7 +491,7 @@ CGO_ENABLED=0 go build -o ingestor .
 ### First-time setup
 
 1. Copy `.env.example` to `.env`
-2. Set strong `admin_password` and `bearer_token` in `.env`
+2. Set strong `admin_password` and `bearer_token` in `.env` (`openssl rand -hex 32`)
 3. Run `./ingestor`
 4. Open `http://127.0.0.1:8080/login` in browser
 5. Configure upload directory and other settings
@@ -488,21 +516,23 @@ curl -H "Authorization: Bearer $TOKEN" -H "Content-Disposition: attachment; file
 
 ## Implementation Order
 
-| Step | Files | What |
-|---|---|---|
-| 1 | `go.mod`, `.env.example`, `.gitignore`, `main.go` | Bootstrap: module, env, gitignore, entry point skeleton |
-| 2 | `internal/db/db.go` | SQLite init, migrations (settings, sessions, upload_history) |
-| 3 | `internal/config/config.go` | Load .env, read/write SQLite settings, in-memory Config struct |
-| 4 | `internal/quarantine/quarantine.go` | Extension blacklist logic |
-| 5 | `internal/upload/handler.go` | Upload handler: multipart, PUT, POST raw, temp file, chmod, quarantine, save |
-| 6 | `internal/auth/bearer.go` | Bearer token middleware |
-| 7 | `internal/logging/middleware.go` | Request logging middleware |
-| 8 | `internal/auth/admin.go` | Admin session middleware + login/logout |
-| 9 | `internal/admin/handler.go` | Admin dashboard, settings save, history view |
-| 10 | `templates/admin.html` | Admin UI template |
-| 11 | `main.go` | Wire everything: routes, middleware chain, server start |
-| 12 | Testing | Manual curl tests for all upload modes, auth, quarantine, admin UI |
-| 13 | Lint | `golangci-lint run` — zero warnings |
+All steps below are **complete**. This section is retained as the build history.
+
+| Step | Files | What | Status |
+|---|---|---|---|
+| 1 | `go.mod`, `.env.example`, `.gitignore`, `main.go` | Bootstrap: module, env, gitignore, entry point skeleton | ✅ |
+| 2 | `internal/db/db.go` | SQLite init, migrations (settings, sessions, upload_history) | ✅ |
+| 3 | `internal/config/config.go` | Load .env, read/write SQLite settings, in-memory Config struct | ✅ |
+| 4 | `internal/quarantine/quarantine.go` | Extension blacklist logic | ✅ |
+| 5 | `internal/upload/handler.go` | Upload handler: multipart, PUT, POST raw, temp file, chmod, quarantine, save | ✅ |
+| 6 | `internal/auth/bearer.go` | Bearer token middleware | ✅ |
+| 7 | `internal/logging/middleware.go` | Request logging middleware | ✅ |
+| 8 | `internal/auth/admin.go` | Session middleware + login/logout | ✅ |
+| 9 | `internal/admin/handler.go`, `files.go` | Login/dashboard render, settings + file list/download/delete | ✅ |
+| 10 | `templates/admin.html` | Login + file-manager dashboard UI (dark/light, dashed borders) | ✅ |
+| 11 | `main.go` | Wire everything: routes, middleware chain, server start | ✅ |
+| 12 | Testing | curl/wget/python upload modes, auth, quarantine, admin UI | ✅ |
+| 13 | Lint | `golangci-lint run` — zero warnings | ✅ |
 
 ---
 
@@ -517,7 +547,7 @@ curl -H "Authorization: Bearer $TOKEN" -H "Content-Disposition: attachment; file
 - Every `.env` change must be reflected in `.env.example`.
 - Build with zero warnings under `golangci-lint`.
 - Use `modernc.org/sqlite` (not `mattn/go-sqlite3`) and build with `CGO_ENABLED=0` for a static airgapped binary.
-- Filename scheme is `{rand_hex}-{sanitized_name}` and `{rand_hex}-{sanitized_name}.quarantined` — never split/rejoin the extension, or you'll duplicate it.
+- Filename scheme is `{base}_{rand}.{ext}` and `{base}_{rand}.{ext}.quarantined` — split via `filepath.Ext`, append random hex after the base so files sort by original name.
 - Quarantine check must scan every dot-separated extension (double-extension bypass).
 - Known deviation (flagged per AGENTIC.md rule #7): non-secret runtime settings live in SQLite, not `.env`. See the Configuration section.
 - The project root is `/Users/encrypt0r/Dev/go/ingestor`.

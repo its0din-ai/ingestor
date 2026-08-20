@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/encrypt0r/ingestor/internal/audit"
 	"github.com/encrypt0r/ingestor/internal/config"
 	"github.com/encrypt0r/ingestor/internal/db"
 	"github.com/encrypt0r/ingestor/internal/logging"
@@ -31,12 +32,13 @@ type response struct {
 }
 
 type Handler struct {
-	cfg  *config.Config
-	conn *sql.DB
+	cfg      *config.Config
+	conn     *sql.DB
+	auditLog *audit.Logger
 }
 
-func New(cfg *config.Config, conn *sql.DB) *Handler {
-	return &Handler{cfg: cfg, conn: conn}
+func New(cfg *config.Config, conn *sql.DB, auditLog *audit.Logger) *Handler {
+	return &Handler{cfg: cfg, conn: conn, auditLog: auditLog}
 }
 
 // ServeHTTP is the catch-all: non-upload methods are logged and acked;
@@ -149,7 +151,7 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request, src io.Reader, na
 
 	quarantined := quarantine.IsQuarantined(name, h.cfg.QuarantineExtensions())
 
-	finalName := randomHex(6) + "-" + name
+	finalName := suffixRandom(name)
 	if quarantined {
 		finalName += ".quarantined"
 	}
@@ -174,6 +176,8 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request, src io.Reader, na
 	}); err != nil {
 		slog.Warn("failed to record upload", "err", err)
 	}
+
+	h.auditLog.Upload(logging.ClientIP(r), name, finalName, written, quarantined)
 
 	level := slog.LevelInfo
 	if quarantined {
@@ -206,6 +210,14 @@ func randomHex(nBytes int) string {
 	b := make([]byte, nBytes)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// suffixRandom appends the random hex after the base filename so files sort by
+// their original name: {base}_{rand}.{ext}.
+func suffixRandom(name string) string {
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	return base + "_" + randomHex(6) + ext
 }
 
 func sanitizeName(name string) string {

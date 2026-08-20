@@ -9,6 +9,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/encrypt0r/ingestor/internal/admin"
+	"github.com/encrypt0r/ingestor/internal/audit"
 	"github.com/encrypt0r/ingestor/internal/auth"
 	"github.com/encrypt0r/ingestor/internal/config"
 	"github.com/encrypt0r/ingestor/internal/db"
@@ -43,15 +44,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	uploadHandler := upload.New(cfg, conn)
-	adminHandler := admin.New(cfg, conn, tmpl)
+	auditLog := audit.New(conn)
+	uploadHandler := upload.New(cfg, conn, auditLog)
+	adminHandler := admin.New(cfg, conn, tmpl, auditLog)
 
 	mux := http.NewServeMux()
 
 	// root: GET redirects to login/dashboard; other methods are the
 	// bearer-protected upload sink (accept-and-log-everything).
 	rootRedirect := auth.Root(conn)
-	bearerUpload := auth.Bearer(cfg)(uploadHandler)
+	bearerUpload := auth.Bearer(cfg, auditLog)(uploadHandler)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			rootRedirect(w, r)
@@ -77,10 +79,11 @@ func main() {
 	dashMux.HandleFunc("POST /dashboard/delete", adminHandler.Delete)
 	dashMux.HandleFunc("GET /dashboard/api/settings", adminHandler.SettingsJSON)
 	dashMux.HandleFunc("POST /dashboard/api/settings", adminHandler.SaveSettingsJSON)
+	dashMux.HandleFunc("GET /dashboard/api/audit", adminHandler.ListAudit)
 	mux.Handle("/dashboard/", auth.Admin(conn)(dashMux))
 
 	// upload API (bearer protected)
-	mux.Handle("/upload", auth.Bearer(cfg)(uploadHandler))
+	mux.Handle("/upload", auth.Bearer(cfg, auditLog)(uploadHandler))
 
 	addr := cfg.Addr()
 	slog.Info("ingestor listening", "addr", addr)

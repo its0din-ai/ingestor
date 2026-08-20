@@ -5,10 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/encrypt0r/ingestor/internal/db"
+	"github.com/encrypt0r/ingestor/internal/logging"
 	"github.com/encrypt0r/ingestor/internal/web"
 )
 
@@ -89,6 +91,7 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
+	h.auditLog.Download(logging.ClientIP(r), name)
 	http.ServeFile(w, r, path)
 }
 
@@ -129,8 +132,73 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.auditLog.Delete(logging.ClientIP(r), name)
+
 	web.JSON(w, http.StatusOK, web.ErrorResponse{
 		Status:  "ok",
 		Message: "File deleted",
 	})
+}
+
+// ListAudit returns a paginated audit log (10 rows per page).
+func (h *Handler) ListAudit(w http.ResponseWriter, r *http.Request) {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	const perPage = 10
+
+	total, err := db.CountAudit(h.conn)
+	if err != nil {
+		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
+			Status:  "error",
+			Message: "failed to count audit log",
+		})
+		return
+	}
+
+	rows, err := db.ListAudit(h.conn, perPage, (page-1)*perPage)
+	if err != nil {
+		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
+			Status:  "error",
+			Message: "failed to read audit log",
+		})
+		return
+	}
+
+	type auditEntry struct {
+		ID         int64  `json:"id"`
+		Action     string `json:"action"`
+		Summary    string `json:"summary"`
+		Detail     string `json:"detail"`
+		RemoteAddr string `json:"remote_addr"`
+		CreatedAt  string `json:"created_at"`
+	}
+
+	entries := make([]auditEntry, 0, len(rows))
+	for _, a := range rows {
+		entries = append(entries, auditEntry{
+			ID:         a.ID,
+			Action:     a.Action,
+			Summary:    a.Summary,
+			Detail:     a.Detail,
+			RemoteAddr: a.RemoteAddr,
+			CreatedAt:  a.CreatedAt.Format(time.RFC3339),
+		})
+	}
+
+	web.JSON(w, http.StatusOK, map[string]any{
+		"entries":     entries,
+		"page":        page,
+		"per_page":    perPage,
+		"total":       total,
+		"total_pages": totalPages(total, perPage),
+	})
+}
+
+func totalPages(total int64, perPage int) int {
+	if total == 0 {
+		return 1
+	}
+	return int((total + int64(perPage) - 1) / int64(perPage))
 }
