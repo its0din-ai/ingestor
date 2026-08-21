@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/encrypt0r/ingestor/internal/audit"
@@ -44,7 +45,7 @@ func New(cfg *config.Config, conn *sql.DB, sessions *auth.Manager, tmpl *templat
 
 func (h *Handler) LoginForm(w http.ResponseWriter, r *http.Request) {
 	csrf := auth.CSRFToken(r)
-	h.render(w, "login", csrf, nil, "")
+	h.render(w, r, "login", csrf, nil, "")
 }
 
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +62,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	if !h.cfg.VerifyAdminPassword(password) {
 		h.auditLog.LoginFailed(remote)
 		csrf := auth.CSRFToken(r)
-		h.render(w, "login", csrf, nil, "invalid password")
+		h.render(w, r, "login", csrf, nil, "invalid password")
 		return
 	}
 	if err := h.sessions.StartSession(w); err != nil {
@@ -81,7 +82,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	csrf := auth.CSRFToken(r)
 	history, _ := db.ListUploads(h.conn, 100, 0)
-	h.render(w, "dashboard", csrf, history, "")
+	h.render(w, r, "dashboard", csrf, history, "")
 }
 
 type dashboardData struct {
@@ -229,20 +230,44 @@ func (h *Handler) settingsErr(w http.ResponseWriter, err error) {
 	})
 }
 
-func (h *Handler) render(w http.ResponseWriter, view string, csrf string, history []db.UploadRecord, errMsg string) {
-	scheme := "http"
-	if h.cfg.CookieSecure() {
-		scheme = "https"
-	}
+func (h *Handler) render(w http.ResponseWriter, r *http.Request, view string, csrf string, history []db.UploadRecord, errMsg string) {
 	data := dashboardData{
 		View:        view,
 		CSRF:        csrf,
 		UploadDir:   h.cfg.UploadDir(),
 		MaxUploadMB: h.cfg.MaxUploadMB(),
-		BaseURL:     scheme + "://" + h.cfg.Addr(),
+		BaseURL:     baseURL(r),
 		History:     history,
 		Error:       errMsg,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = h.tmpl.Execute(w, data)
+}
+
+// baseURL derives the public base URL from the request as the browser sees
+// it. Behind a reverse proxy the X-Forwarded-Proto / X-Forwarded-Host
+// headers carry the external scheme and host, and the request's own Host is
+// used otherwise. The configured listen address (cfg.Addr) is intentionally
+// never used here: it is internal (e.g. 127.0.0.1:8081) and differs from the
+// browser-facing URL.
+func baseURL(r *http.Request) string {
+	scheme := "http"
+	if p := firstHeader(r, "X-Forwarded-Proto"); p != "" {
+		scheme = p
+	} else if r.TLS != nil {
+		scheme = "https"
+	}
+	host := r.Host
+	if h := firstHeader(r, "X-Forwarded-Host"); h != "" {
+		host = h
+	}
+	return scheme + "://" + host
+}
+
+func firstHeader(r *http.Request, name string) string {
+	v := r.Header.Get(name)
+	if i := strings.IndexByte(v, ','); i >= 0 {
+		v = v[:i]
+	}
+	return strings.TrimSpace(v)
 }
