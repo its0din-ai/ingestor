@@ -139,6 +139,7 @@ func (h *Handler) SaveSettingsJSON(w http.ResponseWriter, r *http.Request) {
 		MaxUploadMB          int64             `json:"max_upload_mb"`
 		QuarantineExtensions []string          `json:"quarantine_extensions"`
 		BearerTokens         []bearerTokenData `json:"bearer_tokens"`
+		CurrentPassword      string            `json:"current_password"`
 		AdminPassword        string            `json:"admin_password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -201,6 +202,13 @@ func (h *Handler) SaveSettingsJSON(w http.ResponseWriter, r *http.Request) {
 		h.auditLog.BearerChanged(remote)
 	}
 	if req.AdminPassword != "" {
+		if !h.cfg.VerifyAdminPassword(req.CurrentPassword) {
+			web.JSON(w, http.StatusUnauthorized, web.ErrorResponse{
+				Status:  "error",
+				Message: "current password is incorrect",
+			})
+			return
+		}
 		if err := h.cfg.SetAdminPassword(req.AdminPassword); err != nil {
 			h.settingsErr(w, err)
 			return
