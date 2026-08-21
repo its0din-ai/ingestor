@@ -38,15 +38,32 @@ button{cursor:pointer;font:inherit;border:none;background:none;color:inherit}
 .btn-block{width:100%;justify-content:center}
 .error{color:var(--danger);font-size:.85rem;margin-bottom:1rem}
 
-.sidebar{width:220px;background:var(--panel);border-right:1px dashed var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.sidebar{width:220px;background:var(--panel);border-right:1px dashed var(--border);display:flex;flex-direction:column;flex-shrink:0;transition:width .2s ease}
 .sidebar .brand{padding:1.3rem 1.2rem;font-weight:700;font-size:1.1rem;display:flex;align-items:center;gap:.5rem}
 .sidebar .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--ok)}
 .nav{flex:1;padding:.5rem}
-.nav a{display:flex;align-items:center;gap:.6rem;padding:.65rem .8rem;border-radius:8px;color:var(--muted);font-size:.9rem;margin-bottom:.15rem}
+.nav a{display:flex;align-items:center;gap:.6rem;padding:.65rem .8rem;border-radius:8px;color:var(--muted);font-size:.9rem;margin-bottom:.15rem;white-space:nowrap}
 .nav a:hover{background:var(--panel2);color:var(--text)}
 .nav a.active{background:var(--panel2);color:var(--text)}
-.nav a svg{width:18px;height:18px}
+.nav a svg{width:18px;height:18px;flex-shrink:0}
 .sidebar .foot{padding:1rem 1.2rem;border-top:1px dashed var(--border);font-size:.8rem;color:var(--muted);display:flex;flex-direction:column;gap:.6rem}
+.sidebar .foot a{display:inline-flex;align-items:center;gap:.45rem;padding:.4rem .55rem;border-radius:6px;color:var(--muted);transition:background .15s,color .15s}
+.sidebar .foot a:hover{color:var(--text);background:var(--border)}
+.sidebar .foot a svg{flex-shrink:0}
+.sidebar-toggle{display:inline-flex;align-items:center;gap:.45rem;padding:.4rem .55rem;border-radius:6px;border:1px dashed var(--border);background:var(--panel2);color:var(--muted);font-size:.8rem;transition:background .15s,color .15s}
+.sidebar-toggle:hover{color:var(--text);background:var(--border)}
+.sidebar-toggle svg{width:15px;height:15px;flex-shrink:0}
+.sidebar.collapsed{width:64px}
+.sidebar.collapsed .brand{justify-content:center;padding:1.3rem .5rem}
+.sidebar.collapsed .brand-name,
+.sidebar.collapsed .nav a span,
+.sidebar.collapsed .foot .theme-toggle span,
+.sidebar.collapsed .foot .sidebar-toggle span{display:none}
+.sidebar.collapsed .nav a{justify-content:center;padding:.65rem}
+.sidebar.collapsed .foot{padding:.8rem .5rem}
+.sidebar.collapsed .foot .theme-toggle,
+.sidebar.collapsed .foot .sidebar-toggle,
+.sidebar.collapsed .foot a{justify-content:center;padding:.45rem}
 
 .main{flex:1;overflow-y:auto;padding:1.8rem}
 .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.6rem;gap:1rem}
@@ -68,6 +85,9 @@ button{cursor:pointer;font:inherit;border:none;background:none;color:inherit}
 .files-table td{padding:.7rem 1rem;border-bottom:1px dashed var(--border);font-size:.9rem}
 .files-table tr:last-child td{border-bottom:none}
 .files-table tr:hover td{background:var(--panel2)}
+.table-scroll{overflow-x:auto;border:1px dashed var(--border);border-radius:var(--radius);background:var(--panel)}
+.table-scroll .files-table{width:100%;min-width:940px;border:none;border-radius:0}
+.table-scroll .files-table th,.table-scroll .files-table td{white-space:nowrap}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem}
 .badge{display:inline-block;padding:.15rem .5rem;border-radius:20px;font-size:.72rem;font-weight:600}
 .badge-q{background:rgba(245,184,61,.15);color:var(--warn)}
@@ -170,32 +190,39 @@ textarea:focus{outline:none;border-color:var(--accent)}
   </div>
 </div>
 {{else}}
-<div class="sidebar">
-  <div class="brand"><span class="dot"></span>ingestor</div>
+<div class="sidebar" id="sidebar">
+  <div class="brand"><span class="dot"></span><span class="brand-name">ingestor</span></div>
   <nav class="nav">
     <a href="#" data-view="files" class="active">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
-      Files
+      <span>Files</span>
     </a>
     <a href="#" data-view="settings">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-      Settings
+      <span>Settings</span>
     </a>
     <a href="#" data-view="audit">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/></svg>
-      Audit
+      <span>Audit</span>
     </a>
     <a href="#" data-view="docs">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-      Docs
+      <span>Docs</span>
     </a>
   </nav>
   <div class="foot">
     <button class="theme-toggle" onclick="toggleTheme()">
-      <svg id="theme-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
       <span id="theme-label">Light</span>
     </button>
-    <a href="#" onclick="logout()">Sign out</a>
+    <a href="#" onclick="logout()">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>
+      <span>Sign out</span>
+    </a>
+    <button class="sidebar-toggle" onclick="toggleSidebar()" title="Collapse sidebar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 6-6 6 6 6"/></svg>
+      <span>Collapse</span>
+    </button>
   </div>
 </div>
 
@@ -223,10 +250,12 @@ textarea:focus{outline:none;border-color:var(--accent)}
       <input type="file" id="dz-input" multiple hidden>
       <div class="dz-queue" id="dz-queue"></div>
     </div>
-    <table class="files-table">
-      <thead><tr><th>Name</th><th>Size</th><th>Modified</th><th>Status</th><th>Uploader IP</th><th></th></tr></thead>
-      <tbody id="files-body"></tbody>
-    </table>
+    <div class="table-scroll">
+      <table class="files-table">
+        <thead><tr><th>Name</th><th>Size</th><th>Modified</th><th>Status</th><th>Uploader IP</th><th></th></tr></thead>
+        <tbody id="files-body"></tbody>
+      </table>
+    </div>
     <div class="empty" id="files-empty" style="display:none">No files yet. Upload via the API.</div>
   </div>
 
@@ -749,6 +778,17 @@ document.querySelectorAll('.nav a').forEach(a => a.addEventListener('click', e =
   e.preventDefault();
   switchView(a.dataset.view);
 }));
+
+function toggleSidebar() {
+  const sb = document.getElementById('sidebar');
+  const collapsed = sb.classList.toggle('collapsed');
+  localStorage.setItem('sidebar', collapsed ? 'collapsed' : '');
+}
+
+(function initSidebar() {
+  const sb = document.getElementById('sidebar');
+  if (sb && localStorage.getItem('sidebar') === 'collapsed') sb.classList.add('collapsed');
+})();
 
 loadFiles();
 </script>
