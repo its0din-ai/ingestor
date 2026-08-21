@@ -1,7 +1,11 @@
 package config
 
 import (
+	"crypto/subtle"
 	"database/sql"
+	"encoding/base64"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
@@ -22,6 +26,22 @@ const (
 	keyAdminPasswordHash    = "admin_password_hash"
 )
 
+// envWriteMu serializes writes to the .env file so concurrent settings
+// saves (e.g. bearer token updates) cannot tear the file.
+var envWriteMu sync.Mutex
+
+// BearerToken is a single upload credential. ExpiresAt zero means the token
+// never expires; Label is an optional human-readable name for the sender.
+type BearerToken struct {
+	Token     string
+	ExpiresAt time.Time
+	Label     string
+}
+
+func (b BearerToken) Expired() bool {
+	return !b.ExpiresAt.IsZero() && time.Now().After(b.ExpiresAt)
+}
+
 type Config struct {
 	mu   sync.RWMutex
 	conn *sql.DB
@@ -31,12 +51,15 @@ type Config struct {
 	uploadDir     string
 	maxUploadMB   int64
 	quarantineExt []string
-	bearerToken   string
+	bearerTokens  []BearerToken
 	adminHash     []byte
 }
 
 func Load(conn *sql.DB) (*Config, error) {
 	c := &Config{conn: conn}
+	if _, err := c.JWTSecret(); err != nil {
+		return nil, err
+	}
 	if err := c.seed(); err != nil {
 		return nil, err
 	}
@@ -110,6 +133,14 @@ func (c *Config) refresh() error {
 		maxMB = 2048
 	}
 
+	tokens := parseBearerTokens(os.Getenv("bearer_tokens"))
+	if len(tokens) == 0 {
+		// Legacy single-token config.
+		if legacy := os.Getenv("bearer_token"); legacy != "" {
+			tokens = []BearerToken{{Token: legacy}}
+		}
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.host = envOr("host", "127.0.0.1")
@@ -117,9 +148,32 @@ func (c *Config) refresh() error {
 	c.uploadDir = values[keyUploadDir]
 	c.maxUploadMB = maxMB
 	c.quarantineExt = splitExtensions(values[keyQuarantineExtensions])
-	c.bearerToken = os.Getenv("bearer_token")
+	c.bearerTokens = tokens
 	c.adminHash = []byte(values[keyAdminPasswordHash])
 	return nil
+}
+
+// JWTSecret returns the HS512 signing key. It requires a value of at least
+// 64 bytes (raw string, or base64: prefixed for binary keys).
+func (c *Config) JWTSecret() ([]byte, error) {
+	raw := strings.TrimSpace(os.Getenv("jwt_secret"))
+	if raw == "" {
+		return nil, errors.New("jwt_secret is not set in .env; generate one with: openssl rand -hex 64")
+	}
+	if strings.HasPrefix(raw, "base64:") {
+		b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(raw[len("base64:"):]))
+		if err != nil {
+			return nil, fmt.Errorf("jwt_secret base64 decode: %w", err)
+		}
+		if len(b) < 64 {
+			return nil, fmt.Errorf("jwt_secret must be at least 64 bytes, got %d", len(b))
+		}
+		return b, nil
+	}
+	if len(raw) < 64 {
+		return nil, fmt.Errorf("jwt_secret must be at least 64 bytes, got %d", len(raw))
+	}
+	return []byte(raw), nil
 }
 
 func envOr(key, fallback string) string {
@@ -129,7 +183,21 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
+func durationEnv(key string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		return fallback
+	}
+	return d
+}
+
 func writeEnv(key, value string) error {
+	envWriteMu.Lock()
+	defer envWriteMu.Unlock()
 	values, err := godotenv.Read()
 	if err != nil {
 		values = map[string]string{}
@@ -149,6 +217,49 @@ func splitExtensions(s string) []string {
 	return out
 }
 
+// parseBearerTokens parses a comma-separated list of `[label=]token[|RFC3339]`.
+func parseBearerTokens(raw string) []BearerToken {
+	var out []BearerToken
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		bt := BearerToken{}
+		if i := strings.LastIndex(part, "|"); i >= 0 {
+			if exp, err := time.Parse(time.RFC3339, strings.TrimSpace(part[i+1:])); err == nil {
+				bt.ExpiresAt = exp
+				part = part[:i]
+			}
+		}
+		if i := strings.Index(part, "="); i >= 0 {
+			bt.Label = strings.TrimSpace(part[:i])
+			part = strings.TrimSpace(part[i+1:])
+		}
+		bt.Token = strings.TrimSpace(part)
+		if bt.Token == "" {
+			continue
+		}
+		out = append(out, bt)
+	}
+	return out
+}
+
+func serializeBearerTokens(tokens []BearerToken) string {
+	parts := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		s := t.Token
+		if t.Label != "" {
+			s = t.Label + "=" + s
+		}
+		if !t.ExpiresAt.IsZero() {
+			s += "|" + t.ExpiresAt.UTC().Format(time.RFC3339)
+		}
+		parts = append(parts, s)
+	}
+	return strings.Join(parts, ", ")
+}
+
 func (c *Config) Port() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -165,15 +276,23 @@ func (c *Config) Addr() string {
 // the request body, so it must be long enough to stream large (multi-GiB)
 // uploads over slow links. Set write_timeout to "0" to disable it.
 func (c *Config) WriteTimeout() time.Duration {
-	raw := strings.TrimSpace(os.Getenv("write_timeout"))
-	if raw == "" {
-		return 2 * time.Hour
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil || d < 0 {
-		return 2 * time.Hour
-	}
-	return d
+	return durationEnv("write_timeout", 2*time.Hour)
+}
+
+// SessionTTL is the lifetime of an admin JWT session.
+func (c *Config) SessionTTL() time.Duration {
+	return durationEnv("session_ttl", 24*time.Hour)
+}
+
+// AuditRetention is how long audit entries are kept before pruning. Zero
+// means never prune.
+func (c *Config) AuditRetention() time.Duration {
+	return durationEnv("audit_retention", 90*24*time.Hour)
+}
+
+// CookieSecure marks the session cookie as Secure (HTTPS only).
+func (c *Config) CookieSecure() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("cookie_secure")), "true")
 }
 
 func (c *Config) UploadDir() string {
@@ -198,10 +317,27 @@ func (c *Config) QuarantineExtensions() []string {
 	return append([]string(nil), c.quarantineExt...)
 }
 
-func (c *Config) BearerToken() string {
+func (c *Config) BearerTokens() []BearerToken {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.bearerToken
+	return append([]BearerToken(nil), c.bearerTokens...)
+}
+
+// AuthenticateBearer validates a token against the configured list using
+// constant-time comparison, ignoring expired entries.
+func (c *Config) AuthenticateBearer(token string) (BearerToken, bool) {
+	c.mu.RLock()
+	tokens := c.bearerTokens
+	c.mu.RUnlock()
+	for _, t := range tokens {
+		if t.Token == "" || t.Expired() {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(token), []byte(t.Token)) == 1 {
+			return t, true
+		}
+	}
+	return BearerToken{}, false
 }
 
 func (c *Config) VerifyAdminPassword(password string) bool {
@@ -238,12 +374,13 @@ func (c *Config) SetAdminPassword(password string) error {
 	return c.setSetting(keyAdminPasswordHash, string(hash))
 }
 
-func (c *Config) SetBearerToken(token string) error {
-	if err := writeEnv("bearer_token", token); err != nil {
+// SetBearerTokens persists the token list to .env and refreshes memory.
+func (c *Config) SetBearerTokens(tokens []BearerToken) error {
+	if err := writeEnv("bearer_tokens", serializeBearerTokens(tokens)); err != nil {
 		return err
 	}
 	c.mu.Lock()
-	c.bearerToken = token
+	c.bearerTokens = append([]BearerToken(nil), tokens...)
 	c.mu.Unlock()
 	return nil
 }

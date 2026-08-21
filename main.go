@@ -51,8 +51,13 @@ func main() {
 	}
 
 	auditLog := audit.New(conn)
+	sessions, err := auth.NewManager(cfg, conn)
+	if err != nil {
+		slog.Error("failed to initialize auth", "err", err)
+		os.Exit(1)
+	}
 	uploadHandler := upload.New(cfg, conn, auditLog)
-	adminHandler := admin.New(cfg, conn, tmpl, auditLog)
+	adminHandler := admin.New(cfg, conn, sessions, tmpl, auditLog)
 
 	mux := http.NewServeMux()
 
@@ -62,7 +67,7 @@ func main() {
 
 	// root: GET redirects to login/dashboard; other methods are the
 	// bearer-protected upload sink (accept-and-log-everything).
-	rootRedirect := auth.Root(conn)
+	rootRedirect := sessions.Root()
 	bearerUpload := auth.Bearer(cfg, auditLog)(uploadHandler)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -77,8 +82,8 @@ func main() {
 	publicMux.HandleFunc("GET /login", adminHandler.LoginForm)
 	publicMux.HandleFunc("POST /login", adminHandler.Login)
 	publicMux.HandleFunc("POST /logout", adminHandler.Logout)
-	mux.Handle("/login", auth.Public(conn)(publicMux))
-	mux.Handle("/logout", auth.Public(conn)(publicMux))
+	mux.Handle("/login", sessions.Public()(publicMux))
+	mux.Handle("/logout", sessions.Public()(publicMux))
 
 	// dashboard (session protected)
 	dashMux := http.NewServeMux()
@@ -94,7 +99,7 @@ func main() {
 	dashMux.HandleFunc("GET /dashboard/api/settings", adminHandler.SettingsJSON)
 	dashMux.HandleFunc("POST /dashboard/api/settings", adminHandler.SaveSettingsJSON)
 	dashMux.HandleFunc("GET /dashboard/api/audit", adminHandler.ListAudit)
-	mux.Handle("/dashboard/", auth.Admin(conn)(dashMux))
+	mux.Handle("/dashboard/", sessions.Admin()(dashMux))
 
 	// upload API (bearer protected)
 	mux.Handle("/upload", auth.Bearer(cfg, auditLog)(uploadHandler))
@@ -113,6 +118,29 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Hourly maintenance: prune expired sessions and, if configured, audit
+	// entries older than the retention window.
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				now := time.Now()
+				if err := db.DeleteExpiredSessions(conn, now); err != nil {
+					slog.Warn("failed to prune expired sessions", "err", err)
+				}
+				if ret := cfg.AuditRetention(); ret > 0 {
+					if err := db.DeleteAuditOlderThan(conn, now.Add(-ret)); err != nil {
+						slog.Warn("failed to prune audit log", "err", err)
+					}
+				}
+			}
+		}
+	}()
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.ListenAndServe() }()

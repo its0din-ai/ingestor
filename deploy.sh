@@ -41,7 +41,25 @@ usage() {
   echo "  systemd    Emit a systemd unit for ingestor"
 }
 
+# ensure_jwt_secret makes sure the source .env has a compliant JWT signing
+# key (>= 64 bytes), generating and persisting one if missing or too short.
+ensure_jwt_secret() {
+  if [[ ! -f "$ENV_FILE" ]]; then
+    cp "$ENV_EXAMPLE" "$ENV_FILE"
+  fi
+  local secret
+  secret="$(grep -E '^jwt_secret=' "$ENV_FILE" | tail -1 | cut -d= -f2-)" || true
+  if [[ -z "$secret" || "$(printf %s "$secret" | wc -c | tr -d ' ')" -lt 64 ]]; then
+    secret="$(openssl rand -hex 64)"
+    grep -v '^jwt_secret=' "$ENV_FILE" > "$ENV_FILE.tmp" || true
+    printf 'jwt_secret=%s\n' "$secret" >> "$ENV_FILE.tmp"
+    mv "$ENV_FILE.tmp" "$ENV_FILE"
+    echo "==> Generated jwt_secret in $ENV_FILE"
+  fi
+}
+
 build() {
+  ensure_jwt_secret
   echo "==> Building static binary ($(go version | awk '{print $3}'))"
   mkdir -p "$BUILD_DIR"
   CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$BUILD_DIR/$APP" .

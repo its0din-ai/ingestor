@@ -45,10 +45,16 @@ func Open(path string) (*sql.DB, error) {
 		}
 	}
 
-	conn, err := sql.Open("sqlite", path)
+	// WAL allows concurrent readers alongside a single writer; busy_timeout
+	// makes writers wait instead of failing with SQLITE_BUSY; the pool is
+	// capped at 1 so every statement shares one connection and lock
+	// contention is impossible.
+	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
+	conn, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
+	conn.SetMaxOpenConns(1)
 
 	if err := migrate(conn); err != nil {
 		_ = conn.Close()
@@ -111,6 +117,25 @@ func SessionExpiry(conn *sql.DB, id string) (time.Time, error) {
 
 func DeleteSession(conn *sql.DB, id string) error {
 	_, err := conn.Exec(`DELETE FROM sessions WHERE id = ?`, id)
+	return err
+}
+
+// DeleteAllSessions invalidates every active session (e.g. after an admin
+// password change).
+func DeleteAllSessions(conn *sql.DB) error {
+	_, err := conn.Exec(`DELETE FROM sessions`)
+	return err
+}
+
+// DeleteExpiredSessions removes sessions whose expiry has passed.
+func DeleteExpiredSessions(conn *sql.DB, now time.Time) error {
+	_, err := conn.Exec(`DELETE FROM sessions WHERE expires_at < ?`, now)
+	return err
+}
+
+// DeleteAuditOlderThan removes audit entries older than the given cutoff.
+func DeleteAuditOlderThan(conn *sql.DB, cutoff time.Time) error {
+	_, err := conn.Exec(`DELETE FROM audit_log WHERE created_at < ?`, cutoff)
 	return err
 }
 

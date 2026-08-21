@@ -1,7 +1,7 @@
 package auth
 
 import (
-	"crypto/subtle"
+	"context"
 	"net/http"
 	"strings"
 
@@ -11,12 +11,16 @@ import (
 	"github.com/encrypt0r/ingestor/internal/web"
 )
 
+// Bearer guards the upload API with one of the configured tokens. Tokens are
+// matched constant-time and may carry an optional per-token expiry. The
+// matched token's fingerprint is attached to the request context for audit
+// attribution.
 func Bearer(cfg *config.Config, auditLog *audit.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := bearerFromHeader(r.Header.Get("Authorization"))
-			expected := cfg.BearerToken()
-			if expected == "" || subtle.ConstantTimeCompare([]byte(token), []byte(expected)) != 1 {
+			matched, ok := cfg.AuthenticateBearer(token)
+			if !ok {
 				auditLog.BearerFailed(logging.ClientIP(r), r.URL.Path)
 				web.JSON(w, http.StatusUnauthorized, web.ErrorResponse{
 					Status:  "error",
@@ -24,6 +28,8 @@ func Bearer(cfg *config.Config, auditLog *audit.Logger) func(http.Handler) http.
 				})
 				return
 			}
+			id := BearerIdentity{ID: TokenID(matched.Token), Label: matched.Label}
+			r = r.WithContext(context.WithValue(r.Context(), bearerKey, id))
 			next.ServeHTTP(w, r)
 		})
 	}

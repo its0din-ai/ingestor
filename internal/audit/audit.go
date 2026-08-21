@@ -67,13 +67,24 @@ func (l *Logger) BearerFailed(remote, path string) {
 	l.record(ActionBearerFailed, "failed bearer authentication", map[string]any{"path": path}, remote)
 }
 
-func (l *Logger) Upload(remote, originalName, storedName string, size int64, quarantined bool) {
-	l.record(ActionUpload, "file uploaded: "+originalName, map[string]any{
+func (l *Logger) Upload(remote, originalName, storedName string, size int64, quarantined bool, tokenID, tokenLabel string) {
+	summary := "file uploaded: " + originalName
+	if tokenID != "" {
+		summary = "bearer token id " + tokenID + " used for upload: " + originalName
+	}
+	detail := map[string]any{
 		"original_name": originalName,
 		"stored_name":   storedName,
 		"size":          size,
 		"quarantined":   quarantined,
-	}, remote)
+	}
+	if tokenID != "" {
+		detail["token_id"] = tokenID
+	}
+	if tokenLabel != "" {
+		detail["token_label"] = tokenLabel
+	}
+	l.record(ActionUpload, summary, detail, remote)
 }
 
 func (l *Logger) Download(remote, name string) {

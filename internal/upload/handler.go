@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/encrypt0r/ingestor/internal/audit"
+	"github.com/encrypt0r/ingestor/internal/auth"
 	"github.com/encrypt0r/ingestor/internal/config"
 	"github.com/encrypt0r/ingestor/internal/db"
 	"github.com/encrypt0r/ingestor/internal/logging"
@@ -156,6 +157,19 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request, src io.Reader, na
 		finalName += ".quarantined"
 	}
 	finalPath := filepath.Join(dir, finalName)
+	// Guard against a name collision from a concurrent upload with the same
+	// random suffix: os.Rename would silently overwrite, so retry with a
+	// fresh suffix.
+	for i := 0; i < 5; i++ {
+		if _, err := os.Stat(finalPath); os.IsNotExist(err) {
+			break
+		}
+		finalName = suffixRandom(name)
+		if quarantined {
+			finalName += ".quarantined"
+		}
+		finalPath = filepath.Join(dir, finalName)
+	}
 
 	if err := os.Rename(tmpName, finalPath); err != nil {
 		h.fail(w, http.StatusInternalServerError, "failed to move file")
@@ -177,7 +191,12 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request, src io.Reader, na
 		slog.Warn("failed to record upload", "err", err)
 	}
 
-	h.auditLog.Upload(logging.ClientIP(r), name, finalName, written, quarantined)
+	tokenID, tokenLabel := "", ""
+	if id, ok := auth.BearerIdentityFromContext(r); ok {
+		tokenID, tokenLabel = id.ID, id.Label
+	}
+
+	h.auditLog.Upload(logging.ClientIP(r), name, finalName, written, quarantined, tokenID, tokenLabel)
 
 	level := slog.LevelInfo
 	if quarantined {

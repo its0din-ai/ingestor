@@ -116,6 +116,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
 .field-row .field{flex:1}
 .copy-row{display:flex;gap:.5rem}
 .copy-row input{flex:1}
+.copy-row textarea{flex:1}
 .copy-btn{flex-shrink:0;padding:.6rem .9rem;border-radius:8px;font-size:.85rem;font-weight:600;white-space:nowrap}
 
 .toast{position:fixed;bottom:1.5rem;right:1.5rem;background:var(--panel2);border:1px dashed var(--border);border-left:3px dashed var(--ok);padding:.8rem 1.1rem;border-radius:8px;font-size:.9rem;box-shadow:0 6px 24px var(--shadow);animation:slide .2s ease}
@@ -238,18 +239,18 @@ textarea:focus{outline:none;border-color:var(--accent)}
         <label>Upload directory</label>
         <input type="text" id="s-upload_dir">
       </div>
-      <div class="field-row">
-        <div class="field">
-          <label>Max upload size (MB)</label>
-          <input type="number" id="s-max_upload_mb" min="1">
+      <div class="field">
+        <label>Max upload size (MB)</label>
+        <input type="number" id="s-max_upload_mb" min="1">
+      </div>
+      <div class="field">
+        <label>Bearer tokens</label>
+        <div class="copy-row">
+          <textarea id="s-bearer_tokens" rows="4"></textarea>
+          <button type="button" class="btn-ghost copy-btn" onclick="copyBearer()">Copy first</button>
         </div>
-        <div class="field">
-          <label>Bearer token</label>
-          <div class="copy-row">
-            <input type="password" id="s-bearer_token">
-            <button type="button" class="btn-ghost copy-btn" onclick="copyBearer()">Copy</button>
-          </div>
-        </div>
+        <div class="hint">One token per line: <span class="mono">[label=]token[|expiry]</span>. Omit <span class="mono">|expiry</span> for an indefinite token. Token ids are the first 6 hex chars of each token's hash, used in the audit log.</div>
+        <div class="hint" id="s-bearer_ids" style="margin-top:.3rem"></div>
       </div>
       <div class="field">
         <label>Quarantine extensions</label>
@@ -314,8 +315,8 @@ textarea:focus{outline:none;border-color:var(--accent)}
 
       <h2>Web Features</h2>
       <ul>
-        <li><strong>Files</strong> — browse, search, download, and delete uploaded files, with per-file status and uploader IP.</li>
-        <li><strong>Settings</strong> — hot-reload upload directory, max upload size, bearer token, quarantine extensions, and admin password.</li>
+        <li><strong>Files</strong> — browse, search, read, download, quarantine/release, and delete uploaded files, with per-file status, uploader IP, and text previews.</li>
+        <li><strong>Settings</strong> — hot-reload upload directory, max upload size, bearer tokens (multiple, with optional expiry), quarantine extensions, and admin password. Changing the admin password logs out all sessions.</li>
         <li><strong>Audit</strong> — paginated log of every login, upload, settings change, and file action.</li>
         <li><strong>Dark / light theme</strong> — toggled from the sidebar, persisted in your browser.</li>
       </ul>
@@ -576,25 +577,47 @@ async function setQuarantine(btn) {
   }
 }
 
+function parseTokenLine(line) {
+  let rest = line.trim();
+  let label = '';
+  const eq = rest.indexOf('=');
+  if (eq > 0) { label = rest.slice(0, eq); rest = rest.slice(eq + 1); }
+  let token = rest;
+  let expires_at = '';
+  const pipe = rest.lastIndexOf('|');
+  if (pipe > 0) { expires_at = rest.slice(pipe + 1); token = rest.slice(0, pipe); }
+  return {label, token, expires_at};
+}
+
 async function loadSettings() {
   try {
     const res = await fetch('/dashboard/api/settings');
     const s = await res.json();
     document.getElementById('s-upload_dir').value = s.upload_dir;
     document.getElementById('s-max_upload_mb').value = s.max_upload_mb;
-    document.getElementById('s-bearer_token').value = s.bearer_token;
     document.getElementById('s-quarantine_extensions').value = (s.quarantine_extensions || []).join(',');
+    const lines = (s.bearer_tokens || []).map(t => {
+      let line = t.label ? t.label + '=' + t.token : t.token;
+      if (t.expires_at) line += '|' + t.expires_at;
+      return line;
+    });
+    document.getElementById('s-bearer_tokens').value = lines.join('\n');
+    document.getElementById('s-bearer_ids').textContent =
+      (s.bearer_tokens || []).map(t => (t.label ? t.label + ' ' : '') + 'id ' + t.token_id).join(' · ');
   } catch (e) {
     toast('Failed to load settings', true);
   }
 }
 
 async function saveSettings() {
+  const tokens = document.getElementById('s-bearer_tokens').value.split('\n')
+    .map(parseTokenLine)
+    .filter(t => t.token);
   const payload = {
     upload_dir: document.getElementById('s-upload_dir').value,
     max_upload_mb: parseInt(document.getElementById('s-max_upload_mb').value, 10),
     quarantine_extensions: document.getElementById('s-quarantine_extensions').value.split(',').map(s => s.trim()).filter(Boolean),
-    bearer_token: document.getElementById('s-bearer_token').value,
+    bearer_tokens: tokens,
     admin_password: document.getElementById('s-admin_password').value
   };
   try {
@@ -609,7 +632,9 @@ async function saveSettings() {
       document.getElementById('meta-dir').textContent = payload.upload_dir;
       loadSettings();
     } else {
-      toast('Save failed', true);
+      let msg = 'Save failed';
+      try { msg = (await res.json()).message || msg; } catch (e) {}
+      toast(msg, true);
     }
   } catch (e) {
     toast('Save failed', true);
@@ -628,8 +653,10 @@ function switchView(view) {
 }
 
 function copyBearer() {
-  const el = document.getElementById('s-bearer_token');
-  navigator.clipboard.writeText(el.value).then(() => toast('Bearer token copied'));
+  const first = document.getElementById('s-bearer_tokens').value.split('\n').map(l => l.trim()).filter(Boolean)[0] || '';
+  const tok = parseTokenLine(first).token;
+  if (!tok) return;
+  navigator.clipboard.writeText(tok).then(() => toast('Bearer token copied'));
 }
 
 function logout() {

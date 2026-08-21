@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -26,15 +27,17 @@ type Handler struct {
 	conn         *sql.DB
 	tmpl         *template.Template
 	auditLog     *audit.Logger
+	sessions     *auth.Manager
 	loginLimiter *ratelimit.Limiter
 }
 
-func New(cfg *config.Config, conn *sql.DB, tmpl *template.Template, auditLog *audit.Logger) *Handler {
+func New(cfg *config.Config, conn *sql.DB, sessions *auth.Manager, tmpl *template.Template, auditLog *audit.Logger) *Handler {
 	return &Handler{
 		cfg:          cfg,
 		conn:         conn,
 		tmpl:         tmpl,
 		auditLog:     auditLog,
+		sessions:     sessions,
 		loginLimiter: ratelimit.New(loginLimit, loginWindow),
 	}
 }
@@ -61,7 +64,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		h.render(w, "login", csrf, nil, "invalid password")
 		return
 	}
-	if err := auth.StartSession(h.conn, w); err != nil {
+	if err := h.sessions.StartSession(w); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -71,7 +74,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	h.auditLog.Logout(logging.ClientIP(r))
-	auth.EndSession(h.conn, r, w)
+	h.sessions.EndSession(r, w)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
@@ -90,32 +93,51 @@ type dashboardData struct {
 	Error       string
 }
 
-type settingsData struct {
-	UploadDir            string   `json:"upload_dir"`
-	MaxUploadMB          int64    `json:"max_upload_mb"`
-	QuarantineExtensions []string `json:"quarantine_extensions"`
-	BearerToken          string   `json:"bearer_token"`
+type bearerTokenData struct {
+	Label     string `json:"label"`
+	Token     string `json:"token"`
+	ExpiresAt string `json:"expires_at"`
+	TokenID   string `json:"token_id"`
 }
 
-// SettingsJSON returns the current non-secret settings plus the bearer token
-// (for the admin's own reference in the UI).
+type settingsData struct {
+	UploadDir            string            `json:"upload_dir"`
+	MaxUploadMB          int64             `json:"max_upload_mb"`
+	QuarantineExtensions []string          `json:"quarantine_extensions"`
+	BearerTokens         []bearerTokenData `json:"bearer_tokens"`
+}
+
+// SettingsJSON returns the current non-secret settings plus the bearer
+// tokens (for the admin's own reference in the UI).
 func (h *Handler) SettingsJSON(w http.ResponseWriter, r *http.Request) {
+	tokens := make([]bearerTokenData, 0, len(h.cfg.BearerTokens()))
+	for _, t := range h.cfg.BearerTokens() {
+		data := bearerTokenData{
+			Label:   t.Label,
+			Token:   t.Token,
+			TokenID: auth.TokenID(t.Token),
+		}
+		if !t.ExpiresAt.IsZero() {
+			data.ExpiresAt = t.ExpiresAt.UTC().Format(time.RFC3339)
+		}
+		tokens = append(tokens, data)
+	}
 	data := settingsData{
 		UploadDir:            h.cfg.UploadDir(),
 		MaxUploadMB:          h.cfg.MaxUploadMB(),
 		QuarantineExtensions: h.cfg.QuarantineExtensions(),
-		BearerToken:          h.cfg.BearerToken(),
+		BearerTokens:         tokens,
 	}
 	web.JSON(w, http.StatusOK, data)
 }
 
 func (h *Handler) SaveSettingsJSON(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		UploadDir            string   `json:"upload_dir"`
-		MaxUploadMB          int64    `json:"max_upload_mb"`
-		QuarantineExtensions []string `json:"quarantine_extensions"`
-		BearerToken          string   `json:"bearer_token"`
-		AdminPassword        string   `json:"admin_password"`
+		UploadDir            string            `json:"upload_dir"`
+		MaxUploadMB          int64             `json:"max_upload_mb"`
+		QuarantineExtensions []string          `json:"quarantine_extensions"`
+		BearerTokens         []bearerTokenData `json:"bearer_tokens"`
+		AdminPassword        string            `json:"admin_password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
@@ -149,12 +171,31 @@ func (h *Handler) SaveSettingsJSON(w http.ResponseWriter, r *http.Request) {
 		}
 		changed = append(changed, "quarantine_extensions")
 	}
-	if req.BearerToken != "" {
-		if err := h.cfg.SetBearerToken(req.BearerToken); err != nil {
+	if req.BearerTokens != nil {
+		tokens := make([]config.BearerToken, 0, len(req.BearerTokens))
+		for _, t := range req.BearerTokens {
+			bt := config.BearerToken{Token: t.Token, Label: t.Label}
+			if t.Token == "" {
+				continue
+			}
+			if t.ExpiresAt != "" {
+				exp, err := time.Parse(time.RFC3339, t.ExpiresAt)
+				if err != nil {
+					web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+						Status:  "error",
+						Message: "invalid expiry: " + t.ExpiresAt,
+					})
+					return
+				}
+				bt.ExpiresAt = exp
+			}
+			tokens = append(tokens, bt)
+		}
+		if err := h.cfg.SetBearerTokens(tokens); err != nil {
 			h.settingsErr(w, err)
 			return
 		}
-		changed = append(changed, "bearer_token")
+		changed = append(changed, "bearer_tokens")
 		h.auditLog.BearerChanged(remote)
 	}
 	if req.AdminPassword != "" {
@@ -164,6 +205,10 @@ func (h *Handler) SaveSettingsJSON(w http.ResponseWriter, r *http.Request) {
 		}
 		changed = append(changed, "admin_password")
 		h.auditLog.PasswordChanged(remote)
+		// Force every active session to re-authenticate.
+		if err := db.DeleteAllSessions(h.conn); err != nil {
+			slog.Warn("failed to invalidate sessions after password change", "err", err)
+		}
 	}
 
 	if len(changed) > 0 {
