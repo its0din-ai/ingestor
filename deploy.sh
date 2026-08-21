@@ -76,15 +76,19 @@ build() {
   echo "==> Build complete: $BUILD_DIR/$APP"
 }
 
+# sync_files pushes the build artifacts into the deploy directory. It never
+# deletes anything on the destination (no --delete): the deploy dir may hold
+# the source checkout, uploaded data, or the SQLite DB, and those must never
+# be wiped by a redeploy. Stale build files are simply overwritten.
 sync_files() {
   local src dst
   src="$1"
   dst="$2"
   if [[ -n "$DEPLOY_HOST" ]]; then
-    rsync -av --delete "$src" "$DEPLOY_HOST:$dst"
+    rsync -av "$src" "$DEPLOY_HOST:$dst"
   else
     mkdir -p "$dst"
-    rsync -av --delete "$src" "$dst"
+    rsync -av "$src" "$dst"
   fi
 }
 
