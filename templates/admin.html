@@ -205,6 +205,10 @@ textarea:focus{outline:none;border-color:var(--accent)}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/></svg>
       <span>Audit</span>
     </a>
+    <a href="#" data-view="tokens">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.8 12.2 8.2-8.2"/><path d="m16 6 2 2"/><path d="m12.5 9.5 2 2"/></svg>
+      <span>Tokens</span>
+    </a>
     <a href="#" data-view="docs">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
       <span>Docs</span>
@@ -274,15 +278,6 @@ textarea:focus{outline:none;border-color:var(--accent)}
         <input type="number" id="s-max_upload_mb" min="1">
       </div>
       <div class="field">
-        <label>Bearer tokens</label>
-        <div class="copy-row">
-          <textarea id="s-bearer_tokens" rows="4"></textarea>
-          <button type="button" class="btn-ghost copy-btn" onclick="copyBearer()">Copy first</button>
-        </div>
-        <div class="hint">One token per line: <span class="mono">[label=]token[|expiry]</span>. Omit <span class="mono">|expiry</span> for an indefinite token. Token ids are the first 6 hex chars of each token's hash, used in the audit log.</div>
-        <div class="hint" id="s-bearer_ids" style="margin-top:.3rem"></div>
-      </div>
-      <div class="field">
         <label>Quarantine extensions</label>
         <textarea id="s-quarantine_extensions"></textarea>
         <div class="hint">Comma-separated. Matched uploads are saved with a <span class="mono">.quarantined</span> suffix.</div>
@@ -306,6 +301,20 @@ textarea:focus{outline:none;border-color:var(--accent)}
     </table>
     <div class="empty" id="audit-empty" style="display:none">No audit entries yet.</div>
     <div class="pager" id="audit-pager"></div>
+  </div>
+
+  <div id="view-tokens" style="display:none">
+    <div class="topbar">
+      <div><h1>Tokens</h1><div class="meta">Bearer tokens for API senders. Full tokens are shown here so you can copy and share them.</div></div>
+      <button class="btn btn-primary" onclick="openTokenCreate()">Create token</button>
+    </div>
+    <div class="table-scroll">
+      <table class="files-table">
+        <thead><tr><th>ID</th><th>Label</th><th>Expiry</th><th>Token</th><th></th></tr></thead>
+        <tbody id="tokens-body"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="tokens-empty" style="display:none">No tokens yet. Create one to enable API uploads.</div>
   </div>
 
   <div id="view-docs" style="display:none">
@@ -346,7 +355,8 @@ textarea:focus{outline:none;border-color:var(--accent)}
       <h2>Web Features</h2>
       <ul>
         <li><strong>Files</strong> — browse, search, read, download, quarantine/release, and delete uploaded files, with per-file status, uploader IP, and text previews.</li>
-        <li><strong>Settings</strong> — hot-reload upload directory, max upload size, bearer tokens (multiple, with optional expiry), quarantine extensions, and admin password. Changing the admin password logs out all sessions.</li>
+        <li><strong>Settings</strong> — hot-reload upload directory, max upload size, quarantine extensions, and admin password. Changing the admin password logs out all sessions.</li>
+        <li><strong>Tokens</strong> — create, copy, and delete bearer upload tokens, each with an optional label and expiry.</li>
         <li><strong>Audit</strong> — paginated log of every login, upload, settings change, and file action.</li>
         <li><strong>Dark / light theme</strong> — toggled from the sidebar, persisted in your browser.</li>
       </ul>
@@ -371,6 +381,27 @@ textarea:focus{outline:none;border-color:var(--accent)}
     </div>
     <div class="modal-body">
       <pre id="read-content"></pre>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="token-modal">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-head">
+      <h3>Create token</h3>
+      <button class="modal-close" onclick="closeTokenCreate()">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label>Label (optional, e.g. sender name)</label>
+        <input type="text" id="tok-label" placeholder="alice">
+      </div>
+      <div class="field">
+        <label>Expiry (optional, RFC3339)</label>
+        <input type="text" id="tok-expiry" placeholder="2027-06-01T00:00:00Z">
+      </div>
+      <div class="hint" style="margin-top:.4rem">Leave the expiry empty for an indefinite token.</div>
+      <button class="btn btn-primary btn-block" style="margin-top:.8rem" onclick="createToken()">Create token</button>
     </div>
   </div>
 </div>
@@ -624,16 +655,91 @@ async function setQuarantine(btn) {
   }
 }
 
-function parseTokenLine(line) {
-  let rest = line.trim();
-  let label = '';
-  const eq = rest.indexOf('=');
-  if (eq > 0) { label = rest.slice(0, eq); rest = rest.slice(eq + 1); }
-  let token = rest;
-  let expires_at = '';
-  const pipe = rest.lastIndexOf('|');
-  if (pipe > 0) { expires_at = rest.slice(pipe + 1); token = rest.slice(0, pipe); }
-  return {label, token, expires_at};
+let allTokens = [];
+
+async function loadTokens() {
+  try {
+    const res = await fetch('/dashboard/api/tokens');
+    const data = await res.json();
+    allTokens = data.tokens || [];
+    renderTokens();
+  } catch (e) {
+    toast('Failed to load tokens', true);
+  }
+}
+
+function renderTokens() {
+  const body = document.getElementById('tokens-body');
+  const empty = document.getElementById('tokens-empty');
+  body.innerHTML = '';
+  empty.style.display = allTokens.length ? 'none' : 'block';
+  for (const t of allTokens) {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td class="mono">' + esc(t.token_id) + '</td>' +
+      '<td>' + esc(t.label || '') + '</td>' +
+      '<td>' + esc(t.expires_at || 'never') + '</td>' +
+      '<td><div class="copy-row" style="max-width:420px"><input type="text" value="' + esc(t.token) + '" readonly><button class="icon-btn" onclick="copyToken(this)">copy</button></div></td>' +
+      '<td><div class="row-actions"><button class="icon-btn" onclick="delToken(this)" data-token-id="' + esc(t.token_id) + '" style="color:var(--danger)">delete</button></div></td>';
+    body.appendChild(tr);
+  }
+}
+
+function copyToken(btn) {
+  const input = btn.parentElement.querySelector('input');
+  navigator.clipboard.writeText(input.value).then(() => toast('Token copied'));
+}
+
+function openTokenCreate() {
+  document.getElementById('token-modal').classList.add('open');
+}
+function closeTokenCreate() {
+  document.getElementById('token-modal').classList.remove('open');
+}
+document.getElementById('token-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeTokenCreate();
+});
+
+async function createToken() {
+  const payload = { label: document.getElementById('tok-label').value.trim() };
+  const exp = document.getElementById('tok-expiry').value.trim();
+  if (exp) payload.expires_at = exp;
+  try {
+    const res = await fetch('/dashboard/api/tokens', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      toast('Token created');
+      closeTokenCreate();
+      document.getElementById('tok-label').value = '';
+      document.getElementById('tok-expiry').value = '';
+      loadTokens();
+    } else {
+      let msg = 'Create failed';
+      try { msg = (await res.json()).message || msg; } catch (e) {}
+      toast(msg, true);
+    }
+  } catch (e) {
+    toast('Create failed', true);
+  }
+}
+
+async function delToken(btn) {
+  const id = btn.dataset.tokenId;
+  if (!confirm('Delete token ' + id + '?')) return;
+  try {
+    const res = await fetch('/dashboard/api/tokens/delete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': csrf},
+      body: 'token_id=' + encodeURIComponent(id)
+    });
+    if (res.ok) { toast('Token deleted'); loadTokens(); }
+    else toast('Delete failed', true);
+  } catch (e) {
+    toast('Delete failed', true);
+  }
 }
 
 async function loadSettings() {
@@ -643,28 +749,16 @@ async function loadSettings() {
     document.getElementById('s-upload_dir').value = s.upload_dir;
     document.getElementById('s-max_upload_mb').value = s.max_upload_mb;
     document.getElementById('s-quarantine_extensions').value = (s.quarantine_extensions || []).join(',');
-    const lines = (s.bearer_tokens || []).map(t => {
-      let line = t.label ? t.label + '=' + t.token : t.token;
-      if (t.expires_at) line += '|' + t.expires_at;
-      return line;
-    });
-    document.getElementById('s-bearer_tokens').value = lines.join('\n');
-    document.getElementById('s-bearer_ids').textContent =
-      (s.bearer_tokens || []).map(t => (t.label ? t.label + ' ' : '') + 'id ' + t.token_id).join(' · ');
   } catch (e) {
     toast('Failed to load settings', true);
   }
 }
 
 async function saveSettings() {
-  const tokens = document.getElementById('s-bearer_tokens').value.split('\n')
-    .map(parseTokenLine)
-    .filter(t => t.token);
   const payload = {
     upload_dir: document.getElementById('s-upload_dir').value,
     max_upload_mb: parseInt(document.getElementById('s-max_upload_mb').value, 10),
     quarantine_extensions: document.getElementById('s-quarantine_extensions').value.split(',').map(s => s.trim()).filter(Boolean),
-    bearer_tokens: tokens,
     admin_password: document.getElementById('s-admin_password').value
   };
   try {
@@ -693,17 +787,12 @@ function switchView(view) {
   document.getElementById('view-files').style.display = view === 'files' ? '' : 'none';
   document.getElementById('view-settings').style.display = view === 'settings' ? '' : 'none';
   document.getElementById('view-audit').style.display = view === 'audit' ? '' : 'none';
+  document.getElementById('view-tokens').style.display = view === 'tokens' ? '' : 'none';
   document.getElementById('view-docs').style.display = view === 'docs' ? '' : 'none';
   if (view === 'settings') loadSettings();
   if (view === 'files') loadFiles();
   if (view === 'audit') loadAudit(1);
-}
-
-function copyBearer() {
-  const first = document.getElementById('s-bearer_tokens').value.split('\n').map(l => l.trim()).filter(Boolean)[0] || '';
-  const tok = parseTokenLine(first).token;
-  if (!tok) return;
-  navigator.clipboard.writeText(tok).then(() => toast('Bearer token copied'));
+  if (view === 'tokens') loadTokens();
 }
 
 function logout() {

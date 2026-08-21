@@ -100,6 +100,9 @@ func main() {
 	dashMux.HandleFunc("GET /dashboard/api/settings", adminHandler.SettingsJSON)
 	dashMux.HandleFunc("POST /dashboard/api/settings", adminHandler.SaveSettingsJSON)
 	dashMux.HandleFunc("GET /dashboard/api/audit", adminHandler.ListAudit)
+	dashMux.HandleFunc("GET /dashboard/api/tokens", adminHandler.ListTokens)
+	dashMux.HandleFunc("POST /dashboard/api/tokens", adminHandler.CreateToken)
+	dashMux.HandleFunc("POST /dashboard/api/tokens/delete", adminHandler.DeleteToken)
 	mux.Handle("/dashboard/", sessions.Admin()(dashMux))
 
 	// upload API (bearer protected)
