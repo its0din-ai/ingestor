@@ -4,8 +4,8 @@ set -euo pipefail
 # deploy.sh — build, deploy, and run ingestor in the background with
 # auto-restart. Running it with no arguments rebuilds, redeploys, and
 # (re)starts the app so it keeps serving forever.
-# Deploys to /opt/ingestor when run as root; as a non-root user it
-# deploys to ~/ingestor so no sudo is needed (override via DEPLOY_PATH).
+# Deploys into the project root by default (override via DEPLOY_PATH). The
+# sync never deletes anything on the destination.
 
 APP="ingestor"
 BUILD_DIR="dist"
@@ -18,15 +18,12 @@ LOG_FILE="ingestor.log"
 # Remote deployment (optional). Leave DEPLOY_HOST empty for local-only.
 #   DEPLOY_HOST="user@host" DEPLOY_PATH="/opt/ingestor" ./deploy.sh
 DEPLOY_HOST="${DEPLOY_HOST:-}"
-if [[ -n "${DEPLOY_PATH:-}" ]]; then
-  DEPLOY_PATH="$DEPLOY_PATH"
-elif [[ "$(id -u)" -eq 0 ]]; then
-  DEPLOY_PATH="/opt/$APP"
-else
-  # No root: deploy into the calling user's home so the app can run
-  # without sudo. Override with DEPLOY_PATH to pick another location.
-  DEPLOY_PATH="$HOME/$APP"
-fi
+# Default the deploy dir to the project root (where this script lives) so a
+# plain `./deploy.sh` self-hosts from the checkout. Override with DEPLOY_PATH
+# to deploy elsewhere. Never guess a path like $HOME/ingestor: if that equals
+# the project root, a --delete sync would destroy the source tree.
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEPLOY_PATH="${DEPLOY_PATH:-$PROJECT_ROOT}"
 
 usage() {
   echo "Usage: ./deploy.sh [build|deploy|run|stop|restart|status|logs|systemd]"
@@ -84,10 +81,26 @@ sync_files() {
   local src dst
   src="$1"
   dst="$2"
+
+  # Safety guard: refuse to sync a directory onto itself or into a
+  # subdirectory of itself. This makes it impossible for a deploy to consume
+  # the build output it is meant to produce.
+  local src_abs dst_abs
+  src_abs="$(cd "$src" && pwd)"
+  mkdir -p "$dst"
+  dst_abs="$(cd "$dst" && pwd)"
+  if [[ "$src_abs" == "$dst_abs" ]]; then
+    echo "ERROR: deploy dir is the build dir itself ($src_abs); refusing to sync." >&2
+    exit 1
+  fi
+  if [[ "$dst_abs" == "$src_abs/"* ]]; then
+    echo "ERROR: deploy dir is inside the build dir ($src_abs); refusing to sync." >&2
+    exit 1
+  fi
+
   if [[ -n "$DEPLOY_HOST" ]]; then
     rsync -av "$src" "$DEPLOY_HOST:$dst"
   else
-    mkdir -p "$dst"
     rsync -av "$src" "$dst"
   fi
 }
