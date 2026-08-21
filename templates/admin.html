@@ -179,15 +179,19 @@ textarea:focus{outline:none;border-color:var(--accent)}
       <svg id="theme-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
       <span id="theme-label">Light</span>
     </button>
-    {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
-    <form method="post" action="/login">
-      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-      <div class="field">
-        <label>Admin password</label>
-        <input type="password" name="password" autofocus required>
-      </div>
-      <button type="submit" class="btn btn-primary btn-block">Sign in</button>
-    </form>
+    <div class="login-card">
+      <h1>ingestor</h1>
+      <div class="sub">Secure file drop — admin console</div>
+      {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+      <form method="post" action="/login">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <div class="field">
+          <label>Admin password</label>
+          <input type="password" name="password" autofocus required>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+      </form>
+    </div>
   </div>
 </div>
 {{else}}
