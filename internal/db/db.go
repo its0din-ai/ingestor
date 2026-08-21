@@ -145,6 +145,16 @@ func UploaderIP(conn *sql.DB, storedName string) (string, error) {
 	return ip, err
 }
 
+// SetUploadQuarantined updates the quarantine flag of the stored file name.
+// It is used when an admin quarantines or releases a file from the UI.
+func SetUploadQuarantined(conn *sql.DB, storedName string, quarantined bool) error {
+	_, err := conn.Exec(
+		`UPDATE upload_history SET quarantined = ? WHERE stored_name = ?`,
+		quarantined, storedName,
+	)
+	return err
+}
+
 func ListUploads(conn *sql.DB, limit, offset int) ([]UploadRecord, error) {
 	rows, err := conn.Query(
 		`SELECT original_name, stored_name, file_size, quarantined, remote_addr, created_at FROM upload_history ORDER BY created_at DESC LIMIT ? OFFSET ?`,

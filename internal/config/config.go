@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/joho/godotenv"
 	"golang.org/x/crypto/bcrypt"
@@ -158,6 +159,21 @@ func (c *Config) Addr() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.host + ":" + strconv.Itoa(c.port)
+}
+
+// WriteTimeout is the HTTP server's write deadline. It also covers reading
+// the request body, so it must be long enough to stream large (multi-GiB)
+// uploads over slow links. Set write_timeout to "0" to disable it.
+func (c *Config) WriteTimeout() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("write_timeout"))
+	if raw == "" {
+		return 2 * time.Hour
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		return 2 * time.Hour
+	}
+	return d
 }
 
 func (c *Config) UploadDir() string {

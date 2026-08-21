@@ -1,10 +1,15 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"html/template"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 
@@ -15,6 +20,7 @@ import (
 	"github.com/encrypt0r/ingestor/internal/db"
 	"github.com/encrypt0r/ingestor/internal/logging"
 	"github.com/encrypt0r/ingestor/internal/upload"
+	"github.com/encrypt0r/ingestor/internal/web"
 )
 
 func main() {
@@ -50,6 +56,10 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		web.JSON(w, http.StatusOK, web.ErrorResponse{Status: "ok", Message: "healthy"})
+	})
+
 	// root: GET redirects to login/dashboard; other methods are the
 	// bearer-protected upload sink (accept-and-log-everything).
 	rootRedirect := auth.Root(conn)
@@ -76,7 +86,11 @@ func main() {
 	dashMux.HandleFunc("GET /dashboard", adminHandler.Dashboard)
 	dashMux.HandleFunc("GET /dashboard/api/files", adminHandler.ListFiles)
 	dashMux.HandleFunc("GET /dashboard/download", adminHandler.Download)
+	dashMux.HandleFunc("GET /dashboard/read", adminHandler.Read)
 	dashMux.HandleFunc("POST /dashboard/delete", adminHandler.Delete)
+	dashMux.HandleFunc("POST /dashboard/quarantine", adminHandler.Quarantine)
+	dashMux.HandleFunc("POST /dashboard/release", adminHandler.Release)
+	dashMux.Handle("POST /dashboard/upload", uploadHandler)
 	dashMux.HandleFunc("GET /dashboard/api/settings", adminHandler.SettingsJSON)
 	dashMux.HandleFunc("POST /dashboard/api/settings", adminHandler.SaveSettingsJSON)
 	dashMux.HandleFunc("GET /dashboard/api/audit", adminHandler.ListAudit)
@@ -86,10 +100,36 @@ func main() {
 	mux.Handle("/upload", auth.Bearer(cfg, auditLog)(uploadHandler))
 
 	addr := cfg.Addr()
-	slog.Info("ingestor listening", "addr", addr)
+	writeTimeout := cfg.WriteTimeout()
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           logging.Middleware(mux),
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       90 * time.Second,
+		WriteTimeout:      writeTimeout,
+		MaxHeaderBytes:    1 << 20,
+	}
+	slog.Info("ingestor listening", "addr", addr, "write_timeout", writeTimeout.String())
 
-	if err := http.ListenAndServe(addr, logging.Middleware(mux)); err != nil {
-		slog.Error("server stopped", "err", err)
-		os.Exit(1)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.ListenAndServe() }()
+
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("server stopped", "err", err)
+			os.Exit(1)
+		}
+	case <-ctx.Done():
+		slog.Info("shutting down")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("graceful shutdown failed", "err", err)
+		}
+		slog.Info("server stopped")
 	}
 }

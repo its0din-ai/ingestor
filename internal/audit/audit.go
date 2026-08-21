@@ -18,7 +18,10 @@ const (
 	ActionBearerFailed    Action = "bearer_failed"
 	ActionUpload          Action = "upload"
 	ActionDownload        Action = "download"
+	ActionRead            Action = "read"
 	ActionDelete          Action = "delete"
+	ActionQuarantine      Action = "quarantine"
+	ActionRelease         Action = "release"
 	ActionSettingsChanged Action = "settings_changed"
 	ActionPasswordChanged Action = "password_changed"
 	ActionBearerChanged   Action = "bearer_changed"
@@ -77,8 +80,20 @@ func (l *Logger) Download(remote, name string) {
 	l.record(ActionDownload, "file downloaded: "+name, map[string]any{"stored_name": name}, remote)
 }
 
+func (l *Logger) Read(remote, name string) {
+	l.record(ActionRead, "file read: "+name, map[string]any{"stored_name": name}, remote)
+}
+
 func (l *Logger) Delete(remote, name string) {
 	l.record(ActionDelete, "file deleted: "+name, map[string]any{"stored_name": name}, remote)
+}
+
+func (l *Logger) Quarantine(remote, name string) {
+	l.record(ActionQuarantine, "file quarantined: "+name, map[string]any{"stored_name": name}, remote)
+}
+
+func (l *Logger) Release(remote, name string) {
+	l.record(ActionRelease, "file released from quarantine: "+name, map[string]any{"stored_name": name}, remote)
 }
 
 func (l *Logger) SettingsChanged(remote string, fields []string) {

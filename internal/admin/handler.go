@@ -5,24 +5,38 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http"
+	"time"
 
 	"github.com/encrypt0r/ingestor/internal/audit"
 	"github.com/encrypt0r/ingestor/internal/auth"
 	"github.com/encrypt0r/ingestor/internal/config"
 	"github.com/encrypt0r/ingestor/internal/db"
 	"github.com/encrypt0r/ingestor/internal/logging"
+	"github.com/encrypt0r/ingestor/internal/ratelimit"
 	"github.com/encrypt0r/ingestor/internal/web"
 )
 
+const (
+	loginLimit  = 15
+	loginWindow = 15 * time.Minute
+)
+
 type Handler struct {
-	cfg      *config.Config
-	conn     *sql.DB
-	tmpl     *template.Template
-	auditLog *audit.Logger
+	cfg          *config.Config
+	conn         *sql.DB
+	tmpl         *template.Template
+	auditLog     *audit.Logger
+	loginLimiter *ratelimit.Limiter
 }
 
 func New(cfg *config.Config, conn *sql.DB, tmpl *template.Template, auditLog *audit.Logger) *Handler {
-	return &Handler{cfg: cfg, conn: conn, tmpl: tmpl, auditLog: auditLog}
+	return &Handler{
+		cfg:          cfg,
+		conn:         conn,
+		tmpl:         tmpl,
+		auditLog:     auditLog,
+		loginLimiter: ratelimit.New(loginLimit, loginWindow),
+	}
 }
 
 func (h *Handler) LoginForm(w http.ResponseWriter, r *http.Request) {
@@ -31,9 +45,18 @@ func (h *Handler) LoginForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
+	remote := logging.ClientIP(r)
+	if !h.loginLimiter.Allow(remote) {
+		h.auditLog.LoginFailed(remote)
+		web.JSON(w, http.StatusTooManyRequests, web.ErrorResponse{
+			Status:  "error",
+			Message: "too many login attempts, try again later",
+		})
+		return
+	}
 	password := r.FormValue("password")
 	if !h.cfg.VerifyAdminPassword(password) {
-		h.auditLog.LoginFailed(logging.ClientIP(r))
+		h.auditLog.LoginFailed(remote)
 		csrf := auth.CSRFToken(r)
 		h.render(w, "login", csrf, nil, "invalid password")
 		return

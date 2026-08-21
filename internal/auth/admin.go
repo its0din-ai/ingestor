@@ -110,9 +110,12 @@ func csrfToken(r *http.Request, w http.ResponseWriter) (string, bool) {
 	}
 
 	if r.Method != http.MethodGet {
-		submitted := r.FormValue("csrf_token")
+		// Prefer the header so the body is left untouched for endpoints that
+		// stream it (e.g. multipart uploads); fall back to the form field for
+		// plain HTML form posts such as login/logout.
+		submitted := r.Header.Get("X-CSRF-Token")
 		if submitted == "" {
-			submitted = r.Header.Get("X-CSRF-Token")
+			submitted = r.FormValue("csrf_token")
 		}
 		if !subtleEquals(cookie.Value, submitted) {
 			return "", false

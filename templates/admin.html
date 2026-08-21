@@ -77,6 +77,34 @@ html.light .badge-ok{background:rgba(31,165,111,.12)}
 .row-actions{display:flex;gap:.4rem;justify-content:flex-end}
 .icon-btn{padding:.35rem .6rem;border-radius:6px;font-size:.8rem;border:1px dashed var(--border);background:var(--panel2)}
 .icon-btn:hover{background:var(--border)}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:50;padding:1.5rem}
+.modal-overlay.open{display:flex}
+.modal{background:var(--panel);border:1px dashed var(--border);border-radius:12px;width:100%;max-width:900px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 10px 40px var(--shadow)}
+.modal-head{display:flex;align-items:center;justify-content:space-between;gap:.8rem;padding:.8rem 1.1rem;border-bottom:1px dashed var(--border)}
+.modal-head h3{font-size:.95rem;font-weight:600;word-break:break-all}
+.modal-close{padding:.35rem .6rem;border-radius:6px;border:1px dashed var(--border);background:var(--panel2)}
+.modal-close:hover{background:var(--border)}
+.modal-body{overflow:auto;padding:1rem}
+.modal-body pre{margin:0;white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem;line-height:1.5}
+.modal-error{color:var(--danger);font-size:.85rem}
+.dropzone{margin-bottom:1rem;border:1px dashed var(--border);border-radius:var(--radius);background:var(--panel);padding:1.2rem;text-align:center;cursor:pointer;transition:background .15s}
+.dropzone.drag{background:var(--panel2);border-color:var(--accent)}
+.dz-inner p{color:var(--muted);font-size:.85rem}
+.dz-inner p.dz-title{color:var(--text);margin-bottom:.2rem}
+.dz-browse{color:var(--accent);text-decoration:underline}
+.dz-hint{font-size:.75rem}
+.dz-queue{margin-top:.8rem;text-align:left;display:flex;flex-direction:column;gap:.5rem}
+.dz-item{background:var(--panel2);border:1px dashed var(--border);border-radius:8px;padding:.55rem .8rem}
+.dz-item-head{display:flex;align-items:center;gap:.6rem;font-size:.82rem;margin-bottom:.35rem}
+.dz-name{flex:1;word-break:break-all}
+.dz-size{color:var(--muted);white-space:nowrap}
+.dz-status{font-weight:600;white-space:nowrap}
+.dz-status.queued{color:var(--muted)}
+.dz-status.uploading{color:var(--accent)}
+.dz-status.done{color:var(--ok)}
+.dz-status.error{color:var(--danger)}
+.dz-bar{height:6px;background:var(--border);border-radius:4px;overflow:hidden}
+.dz-bar-fill{height:100%;background:var(--accent);width:0;transition:width .15s}
 .empty{padding:3rem;text-align:center;color:var(--muted)}
 
 .card{background:var(--panel);border:1px dashed var(--border);border-radius:var(--radius);padding:1.5rem;max-width:640px}
@@ -184,6 +212,14 @@ textarea:focus{outline:none;border-color:var(--accent)}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
         <input id="search" type="text" placeholder="Filter files…" oninput="renderFiles()">
       </div>
+    </div>
+    <div class="dropzone" id="dropzone">
+      <div class="dz-inner">
+        <p class="dz-title">Drag &amp; drop files here or <span class="dz-browse">browse</span></p>
+        <p class="dz-hint">Uploads land in the upload directory, session-authenticated. Multiple files upload one at a time.</p>
+      </div>
+      <input type="file" id="dz-input" multiple hidden>
+      <div class="dz-queue" id="dz-queue"></div>
     </div>
     <table class="files-table">
       <thead><tr><th>Name</th><th>Size</th><th>Modified</th><th>Status</th><th>Uploader IP</th><th></th></tr></thead>
@@ -295,6 +331,18 @@ textarea:focus{outline:none;border-color:var(--accent)}
     </div>
   </div>
 </div>
+
+<div class="modal-overlay" id="read-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="read-name"></h3>
+      <button class="modal-close" onclick="closeReader()">Close</button>
+    </div>
+    <div class="modal-body">
+      <pre id="read-content"></pre>
+    </div>
+  </div>
+</div>
 {{end}}
 
 {{if ne .View "login"}}
@@ -353,6 +401,10 @@ function renderFiles() {
       '<td>' + (f.quarantined ? '<span class="badge badge-q">quarantined</span>' : '<span class="badge badge-ok">ok</span>') + '</td>' +
       '<td>' + esc(f.uploader_ip || '') + '</td>' +
       '<td><div class="row-actions">' +
+        (f.quarantined
+          ? '<button class="icon-btn" onclick="setQuarantine(this)" data-action="release" data-name="' + esc(f.name) + '">release</button>'
+          : '<button class="icon-btn" onclick="setQuarantine(this)" data-action="quarantine" data-name="' + esc(f.name) + '">quarantine</button>') +
+        (f.readable ? '<button class="icon-btn" onclick="readFile(this)" data-name="' + esc(f.name) + '">read</button>' : '') +
         '<a class="icon-btn" href="/dashboard/download?name=' + encodeURIComponent(f.name) + '">download</a>' +
         '<button class="icon-btn" onclick="delFile(this)" data-name="' + esc(f.name) + '" style="color:var(--danger)">delete</button>' +
       '</div></td>';
@@ -373,6 +425,154 @@ async function delFile(btn) {
     else toast('Delete failed', true);
   } catch (e) {
     toast('Delete failed', true);
+  }
+}
+
+async function readFile(btn) {
+  const name = btn.dataset.name;
+  const overlay = document.getElementById('read-modal');
+  const title = document.getElementById('read-name');
+  const content = document.getElementById('read-content');
+  title.textContent = name;
+  content.textContent = '';
+  overlay.classList.add('open');
+  try {
+    const res = await fetch('/dashboard/read?name=' + encodeURIComponent(name));
+    if (!res.ok) {
+      let msg = 'Failed to read file';
+      try { msg = (await res.json()).message || msg; } catch (e) {}
+      content.textContent = msg;
+      content.className = 'modal-error';
+      return;
+    }
+    content.className = '';
+    content.textContent = await res.text();
+  } catch (e) {
+    content.textContent = 'Failed to read file';
+    content.className = 'modal-error';
+  }
+}
+
+function closeReader() {
+  document.getElementById('read-modal').classList.remove('open');
+}
+
+document.getElementById('read-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeReader();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeReader(); });
+
+let uploadQueue = [];
+let uploading = false;
+
+function addFiles(fileList) {
+  for (const f of fileList) {
+    uploadQueue.push({ file: f, name: f.name, size: f.size, status: 'queued', progress: 0 });
+  }
+  renderQueue();
+  processQueue();
+}
+
+function renderQueue() {
+  const q = document.getElementById('dz-queue');
+  q.innerHTML = '';
+  uploadQueue.forEach(item => {
+    const el = document.createElement('div');
+    el.className = 'dz-item';
+    el.innerHTML =
+      '<div class="dz-item-head">' +
+        '<span class="dz-name">' + esc(item.name) + '</span>' +
+        '<span class="dz-size">' + fmtSize(item.size) + '</span>' +
+        '<span class="dz-status ' + esc(item.status) + '">' + esc(item.status) + '</span>' +
+      '</div>' +
+      '<div class="dz-bar"><div class="dz-bar-fill" style="width:' + Math.round(item.progress) + '%"></div></div>';
+    q.appendChild(el);
+  });
+}
+
+function updateQueueItem(index, item) {
+  const q = document.getElementById('dz-queue');
+  const el = q.children[index];
+  if (!el) return;
+  const status = el.querySelector('.dz-status');
+  const fill = el.querySelector('.dz-bar-fill');
+  status.textContent = item.status;
+  status.className = 'dz-status ' + item.status;
+  fill.style.width = Math.round(item.progress) + '%';
+}
+
+function uploadOne(item) {
+  return new Promise(resolve => {
+    const xhr = new XMLHttpRequest();
+    const fd = new FormData();
+    fd.append('file', item.file);
+    xhr.open('POST', '/dashboard/upload');
+    xhr.setRequestHeader('X-CSRF-Token', csrf);
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable) {
+        item.progress = e.loaded / e.total * 100;
+        updateQueueItem(0, item);
+      }
+    };
+    xhr.onload = () => {
+      try {
+        const d = JSON.parse(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300) {
+          toast(item.name + ' uploaded (' + fmtSize(d.size || 0) + ')' + (d.quarantined ? ' — quarantined' : ''));
+          loadFiles();
+        } else {
+          toast('Upload failed: ' + (d.message || xhr.status), true);
+        }
+      } catch (e) {
+        toast('Upload failed', true);
+      }
+      resolve();
+    };
+    xhr.onerror = () => { toast('Upload failed', true); resolve(); };
+    item.status = 'uploading';
+    item.progress = 0;
+    updateQueueItem(0, item);
+    xhr.send(fd);
+  });
+}
+
+async function processQueue() {
+  if (uploading) return;
+  uploading = true;
+  try {
+    while (uploadQueue.length) {
+      await uploadOne(uploadQueue[0]);
+      uploadQueue.shift();
+      renderQueue();
+    }
+  } finally {
+    uploading = false;
+  }
+}
+
+const dz = document.getElementById('dropzone');
+const dzInput = document.getElementById('dz-input');
+dz.addEventListener('click', () => dzInput.click());
+dzInput.addEventListener('change', () => { addFiles(dzInput.files); dzInput.value = ''; });
+['dragover', 'dragenter'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('drag'); }));
+['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('drag'); }));
+dz.addEventListener('drop', e => addFiles(e.dataTransfer.files));
+
+async function setQuarantine(btn) {
+  const name = btn.dataset.name;
+  const action = btn.dataset.action;
+  const verb = action === 'quarantine' ? 'Quarantine' : 'Release';
+  if (!confirm(verb + ' ' + name + '?')) return;
+  try {
+    const res = await fetch('/dashboard/' + action, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': csrf},
+      body: 'name=' + encodeURIComponent(name)
+    });
+    if (res.ok) { toast('File ' + verb.toLowerCase() + 'd'); loadFiles(); }
+    else toast(verb + ' failed', true);
+  } catch (e) {
+    toast(verb + ' failed', true);
   }
 }
 

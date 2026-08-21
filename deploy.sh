@@ -4,6 +4,8 @@ set -euo pipefail
 # deploy.sh — build, deploy, and run ingestor in the background with
 # auto-restart. Running it with no arguments rebuilds, redeploys, and
 # (re)starts the app so it keeps serving forever.
+# Deploys to /opt/ingestor when run as root; as a non-root user it
+# deploys to ~/ingestor so no sudo is needed (override via DEPLOY_PATH).
 
 APP="ingestor"
 BUILD_DIR="dist"
@@ -16,7 +18,15 @@ LOG_FILE="ingestor.log"
 # Remote deployment (optional). Leave DEPLOY_HOST empty for local-only.
 #   DEPLOY_HOST="user@host" DEPLOY_PATH="/opt/ingestor" ./deploy.sh
 DEPLOY_HOST="${DEPLOY_HOST:-}"
-DEPLOY_PATH="${DEPLOY_PATH:-/opt/$APP}"
+if [[ -n "${DEPLOY_PATH:-}" ]]; then
+  DEPLOY_PATH="$DEPLOY_PATH"
+elif [[ "$(id -u)" -eq 0 ]]; then
+  DEPLOY_PATH="/opt/$APP"
+else
+  # No root: deploy into the calling user's home so the app can run
+  # without sudo. Override with DEPLOY_PATH to pick another location.
+  DEPLOY_PATH="$HOME/$APP"
+fi
 
 usage() {
   echo "Usage: ./deploy.sh [build|deploy|run|stop|restart|status|logs|systemd]"
@@ -83,12 +93,17 @@ run_remote() {
 
 run_local() {
   local run_dir="$DEPLOY_PATH"
+  if [[ ! -w "$run_dir" ]]; then
+    echo "ERROR: $run_dir is not writable by $(id -un)." >&2
+    echo "       Run deploy.sh as root, or set DEPLOY_PATH to a user-writable directory." >&2
+    exit 1
+  fi
   stop
   echo "==> Starting supervised process in $run_dir"
   (
     cd "$run_dir"
-    nohup sh -c 'while true; do ./ingestor >> ingestor.log 2>&1; sleep 2; done' >/dev/null 2>&1 &
-    echo $! > "$PID_FILE"
+    nohup sh -c "while true; do ./$APP >> $LOG_FILE 2>&1; sleep 2; done" >/dev/null 2>&1 &
+    echo $! > "$run_dir/$PID_FILE"
   )
   sleep 1
   if [[ -f "$run_dir/$PID_FILE" ]]; then
@@ -109,11 +124,16 @@ stop() {
   if [[ -n "$DEPLOY_HOST" ]]; then
     remote_cmd "if [ -f '$DEPLOY_PATH/$PID_FILE' ]; then kill \$(cat '$DEPLOY_PATH/$PID_FILE') 2>/dev/null || true; fi; pkill -f '$DEPLOY_PATH/$APP' 2>/dev/null || true"
   else
+    local spid
     if [[ -f "$DEPLOY_PATH/$PID_FILE" ]]; then
-      kill "$(cat "$DEPLOY_PATH/$PID_FILE")" 2>/dev/null || true
+      spid="$(cat "$DEPLOY_PATH/$PID_FILE")"
+      # Kill the supervised app before its supervisor loop restarts it.
+      pkill -P "$spid" 2>/dev/null || true
+      kill "$spid" 2>/dev/null || true
       rm -f "$DEPLOY_PATH/$PID_FILE"
     fi
     pkill -f "$DEPLOY_PATH/$APP" 2>/dev/null || true
+    pkill -f "\./$APP" 2>/dev/null || true
   fi
   echo "==> Stopped."
 }

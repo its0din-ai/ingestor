@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/encrypt0r/ingestor/internal/db"
+	"github.com/encrypt0r/ingestor/internal/filetype"
 	"github.com/encrypt0r/ingestor/internal/logging"
 	"github.com/encrypt0r/ingestor/internal/web"
 )
@@ -20,6 +21,7 @@ type fileInfo struct {
 	Modified    time.Time `json:"modified"`
 	Quarantined bool      `json:"quarantined"`
 	UploaderIP  string    `json:"uploader_ip"`
+	Readable    bool      `json:"readable"`
 }
 
 // ListFiles returns the files currently stored in the upload directory.
@@ -44,12 +46,14 @@ func (h *Handler) ListFiles(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		ip, _ := db.UploaderIP(h.conn, e.Name())
+		readable, _ := filetype.IsText(filepath.Join(dir, e.Name()))
 		files = append(files, fileInfo{
 			Name:        e.Name(),
 			Size:        info.Size(),
 			Modified:    info.ModTime(),
 			Quarantined: strings.HasSuffix(e.Name(), ".quarantined"),
 			UploaderIP:  ip,
+			Readable:    readable,
 		})
 	}
 
@@ -60,20 +64,26 @@ func (h *Handler) ListFiles(w http.ResponseWriter, r *http.Request) {
 	web.JSON(w, http.StatusOK, map[string]any{"files": files})
 }
 
-// Download serves a stored file. The name is sanitized to a single path
-// component to prevent traversal outside the upload directory.
-func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
-	name := filepath.Base(r.URL.Query().Get("name"))
+// storedPath validates name as a single path component inside the upload
+// directory, preventing traversal outside it. It returns the resolved path
+// and whether the name was acceptable.
+func (h *Handler) storedPath(name string) (string, bool) {
+	name = filepath.Base(name)
 	if name == "." || name == "" {
-		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
-			Status:  "error",
-			Message: "invalid file name",
-		})
-		return
+		return "", false
 	}
+	dir := h.cfg.UploadDir()
+	path := filepath.Join(dir, name)
+	if !strings.HasPrefix(path, filepath.Clean(dir)+string(os.PathSeparator)) {
+		return "", false
+	}
+	return path, true
+}
 
-	path := filepath.Join(h.cfg.UploadDir(), name)
-	if !strings.HasPrefix(path, filepath.Clean(h.cfg.UploadDir())+string(os.PathSeparator)) {
+// Download serves a stored file.
+func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
+	path, ok := h.storedPath(r.URL.Query().Get("name"))
+	if !ok {
 		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
 			Status:  "error",
 			Message: "invalid file name",
@@ -90,15 +100,18 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	name := filepath.Base(path)
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
 	h.auditLog.Download(logging.ClientIP(r), name)
 	http.ServeFile(w, r, path)
 }
 
-// Delete removes a stored file.
-func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
-	name := filepath.Base(r.FormValue("name"))
-	if name == "." || name == "" {
+// Read serves a stored text file inline as text/plain so it can be viewed
+// directly in the browser. Binary files are rejected; content is always
+// served as text/plain and never rendered as HTML.
+func (h *Handler) Read(w http.ResponseWriter, r *http.Request) {
+	path, ok := h.storedPath(r.URL.Query().Get("name"))
+	if !ok {
 		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
 			Status:  "error",
 			Message: "invalid file name",
@@ -106,8 +119,158 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := filepath.Join(h.cfg.UploadDir(), name)
-	if !strings.HasPrefix(path, filepath.Clean(h.cfg.UploadDir())+string(os.PathSeparator)) {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
+			Status:  "error",
+			Message: "file not found",
+		})
+		return
+	}
+
+	text, err := filetype.IsText(path)
+	if err != nil {
+		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
+			Status:  "error",
+			Message: "failed to read file",
+		})
+		return
+	}
+	if !text {
+		web.JSON(w, http.StatusUnsupportedMediaType, web.ErrorResponse{
+			Status:  "error",
+			Message: "binary files cannot be viewed in the browser",
+		})
+		return
+	}
+
+	name := filepath.Base(path)
+	h.auditLog.Read(logging.ClientIP(r), name)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", "inline; filename=\""+name+"\"")
+	http.ServeFile(w, r, path)
+}
+
+// Quarantine renames a stored file to append the .quarantined suffix so it
+// cannot be executed or served as its original type.
+func (h *Handler) Quarantine(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("name")
+	path, ok := h.storedPath(name)
+	if !ok {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "invalid file name",
+		})
+		return
+	}
+	if strings.HasSuffix(name, ".quarantined") {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "file is already quarantined",
+		})
+		return
+	}
+	if !h.fileExists(path) {
+		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
+			Status:  "error",
+			Message: "file not found",
+		})
+		return
+	}
+
+	target := path + ".quarantined"
+	if _, err := os.Stat(target); err == nil {
+		web.JSON(w, http.StatusConflict, web.ErrorResponse{
+			Status:  "error",
+			Message: "a quarantined file with that name already exists",
+		})
+		return
+	}
+	if err := os.Rename(path, target); err != nil {
+		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
+			Status:  "error",
+			Message: "failed to quarantine file",
+		})
+		return
+	}
+
+	_ = db.SetUploadQuarantined(h.conn, name, true)
+	h.auditLog.Quarantine(logging.ClientIP(r), name)
+
+	web.JSON(w, http.StatusOK, web.ErrorResponse{
+		Status:  "ok",
+		Message: "File quarantined",
+	})
+}
+
+// Release removes the .quarantined suffix from a stored file.
+func (h *Handler) Release(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("name")
+	if !strings.HasSuffix(name, ".quarantined") {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "file is not quarantined",
+		})
+		return
+	}
+	path, ok := h.storedPath(name)
+	if !ok {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "invalid file name",
+		})
+		return
+	}
+	if !h.fileExists(path) {
+		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
+			Status:  "error",
+			Message: "file not found",
+		})
+		return
+	}
+
+	base := strings.TrimSuffix(name, ".quarantined")
+	basePath, ok := h.storedPath(base)
+	if !ok {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "invalid file name",
+		})
+		return
+	}
+	if _, err := os.Stat(basePath); err == nil {
+		web.JSON(w, http.StatusConflict, web.ErrorResponse{
+			Status:  "error",
+			Message: "the original file name is already taken",
+		})
+		return
+	}
+	if err := os.Rename(path, basePath); err != nil {
+		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
+			Status:  "error",
+			Message: "failed to release file",
+		})
+		return
+	}
+
+	_ = db.SetUploadQuarantined(h.conn, base, false)
+	h.auditLog.Release(logging.ClientIP(r), base)
+
+	web.JSON(w, http.StatusOK, web.ErrorResponse{
+		Status:  "ok",
+		Message: "File released from quarantine",
+	})
+}
+
+func (h *Handler) fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+// Delete removes a stored file.
+func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
+	path, ok := h.storedPath(r.FormValue("name"))
+	if !ok {
 		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
 			Status:  "error",
 			Message: "invalid file name",
@@ -132,7 +295,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.auditLog.Delete(logging.ClientIP(r), name)
+	h.auditLog.Delete(logging.ClientIP(r), filepath.Base(path))
 
 	web.JSON(w, http.StatusOK, web.ErrorResponse{
 		Status:  "ok",
