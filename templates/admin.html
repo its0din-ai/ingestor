@@ -181,12 +181,12 @@ textarea:focus{outline:none;border-color:var(--accent)}
     </button>
     <div class="login-card">
       <h1>ingestor</h1>
-      <div class="sub">Secure file drop — admin console</div>
+      <div class="sub">Offensive file drop</div>
       {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
       <form method="post" action="/login">
         <input type="hidden" name="csrf_token" value="{{.CSRF}}">
         <div class="field">
-          <label>Admin password</label>
+          <label>Passcode</label>
           <input type="password" name="password" autofocus required>
         </div>
         <button type="submit" class="btn btn-primary btn-block">Sign in</button>
