@@ -89,6 +89,7 @@ type dashboardData struct {
 	CSRF        string
 	UploadDir   string
 	MaxUploadMB int64
+	BaseURL     string
 	History     []db.UploadRecord
 	Error       string
 }
@@ -229,11 +230,16 @@ func (h *Handler) settingsErr(w http.ResponseWriter, err error) {
 }
 
 func (h *Handler) render(w http.ResponseWriter, view string, csrf string, history []db.UploadRecord, errMsg string) {
+	scheme := "http"
+	if h.cfg.CookieSecure() {
+		scheme = "https"
+	}
 	data := dashboardData{
 		View:        view,
 		CSRF:        csrf,
 		UploadDir:   h.cfg.UploadDir(),
 		MaxUploadMB: h.cfg.MaxUploadMB(),
+		BaseURL:     scheme + "://" + h.cfg.Addr(),
 		History:     history,
 		Error:       errMsg,
 	}

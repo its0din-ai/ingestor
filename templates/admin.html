@@ -323,23 +323,24 @@ textarea:focus{outline:none;border-color:var(--accent)}
     </div>
     <div class="docs">
       <h2>Authentication</h2>
-      <p>All API endpoints require a bearer token, sent in the <code>Authorization</code> header:</p>
+      <p>API uploads require a bearer token from the <strong>Tokens</strong> view, sent in the <code>Authorization</code> header:</p>
       <pre><code>Authorization: Bearer $TOKEN</code></pre>
+      <p>The admin console uses a JWT (HS512) session cookie named <code>session</code>. Logging out destroys the token server-side, and changing the admin password signs out every active session. Login is rate limited to 15 attempts per 15 minutes per IP.</p>
 
       <h2>Upload API</h2>
       <table>
         <thead><tr><th>Endpoint</th><th>Method</th><th>Purpose</th></tr></thead>
         <tbody>
-          <tr><td><code>/upload</code></td><td>POST / PUT</td><td>Upload a single file</td></tr>
-          <tr><td><code>/</code> (any path)</td><td>non-GET</td><td>Accept-and-log sink for any request</td></tr>
+          <tr><td><code>{{.BaseURL}}/upload</code></td><td>POST / PUT</td><td>Upload a single file</td></tr>
+          <tr><td><code>{{.BaseURL}}/</code> (any path)</td><td>non-GET</td><td>Accept-and-log sink for any request</td></tr>
         </tbody>
       </table>
       <h3>Multipart form</h3>
-      <pre><code>curl -H "Authorization: Bearer $TOKEN" -F "file=@myfile.txt" http://host/upload</code></pre>
+      <pre><code>curl -H "Authorization: Bearer $TOKEN" -F "file=@myfile.txt" {{.BaseURL}}/upload</code></pre>
       <h3>PUT raw body</h3>
-      <pre><code>curl -H "Authorization: Bearer $TOKEN" -T myfile.txt http://host/upload</code></pre>
+      <pre><code>curl -H "Authorization: Bearer $TOKEN" -T myfile.txt {{.BaseURL}}/upload</code></pre>
       <h3>POST raw body with filename</h3>
-      <pre><code>curl -H "Authorization: Bearer $TOKEN" --data-binary @myfile.txt "http://host/upload?name=myfile.txt"</code></pre>
+      <pre><code>curl -H "Authorization: Bearer $TOKEN" --data-binary @myfile.txt "{{.BaseURL}}/upload?name=myfile.txt"</code></pre>
       <p>The original filename is resolved from the multipart part, a <code>Content-Disposition</code> header, the <code>?name=</code> query param, or falls back to <code>upload-&lt;unix-timestamp&gt;</code>.</p>
 
       <h3>Response</h3>
@@ -350,24 +351,30 @@ textarea:focus{outline:none;border-color:var(--accent)}
   "quarantined": false,
   "timestamp": "2026-08-20T15:04:05Z"
 }</code></pre>
-      <p>The stored filename is never returned.</p>
+      <p>The stored filename is never returned. Uploads made with a bearer token are recorded in the audit log with the token's short id (e.g. <code>bearer token id a3f9c2 used for upload: report.pdf</code>).</p>
 
       <h2>Web Features</h2>
       <ul>
-        <li><strong>Files</strong> — browse, search, read, download, quarantine/release, and delete uploaded files, with per-file status, uploader IP, and text previews.</li>
+        <li><strong>Files</strong> — drag-and-drop uploads with progress, search, text previews, download, quarantine/release, and delete, with per-file status and uploader IP. Shows a live disk-usage monitor (uploads / used / total, % free).</li>
         <li><strong>Settings</strong> — hot-reload upload directory, max upload size, quarantine extensions, and admin password. Changing the admin password logs out all sessions.</li>
-        <li><strong>Tokens</strong> — create, copy, and delete bearer upload tokens, each with an optional label and expiry.</li>
-        <li><strong>Audit</strong> — paginated log of every login, upload, settings change, and file action.</li>
-        <li><strong>Dark / light theme</strong> — toggled from the sidebar, persisted in your browser.</li>
+        <li><strong>Tokens</strong> — create, copy, and delete bearer upload tokens, each with an optional label and expiry. Omit the expiry for an indefinite token.</li>
+        <li><strong>Audit</strong> — paginated log of every login, upload, read, download, quarantine/release, settings change, and file action, pruned after the configured retention (default 90 days).</li>
+        <li><strong>Dark / light theme</strong> and a collapsible sidebar — toggled from the sidebar, persisted in your browser.</li>
       </ul>
+
+      <h2>Health</h2>
+      <pre><code>curl {{.BaseURL}}/healthz</code></pre>
 
       <h2>Security</h2>
       <ul>
-        <li>Bearer-token auth with constant-time comparison.</li>
-        <li>Dangerous extensions are quarantined with a <code>.quarantined</code> suffix.</li>
+        <li>Bearer tokens matched with constant-time comparison; each token may carry its own expiry.</li>
+        <li>Admin sessions are HS512-signed JWTs pinned to the <code>HS512</code> algorithm, with a server-side allowlist so logged-out tokens are rejected even while the signature is valid.</li>
+        <li>Login is rate limited per IP; password changes invalidate all sessions.</li>
+        <li>Dangerous extensions are quarantined with a <code>.quarantined</code> suffix; files can be quarantined or released from the UI.</li>
         <li>Saved files are <code>chmod 0644</code> — execute bits stripped.</li>
         <li>Filenames are sanitized against path traversal; uploads stream to disk with a size cap.</li>
-        <li>Admin sessions use a CSRF token plus an HttpOnly, SameSite=Strict cookie.</li>
+        <li>CSRF protection via a double-submit cookie, plus HttpOnly, SameSite=Strict session cookies.</li>
+        <li>SQLite runs in WAL mode with a single connection and busy timeout, so concurrent uploads cannot lock the database.</li>
       </ul>
     </div>
   </div>
