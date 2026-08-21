@@ -205,6 +205,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
       <div>
         <h1>Files</h1>
         <div class="meta">Upload directory: <span class="mono" id="meta-dir">{{.UploadDir}}</span></div>
+        <div class="meta">Disk: <span class="mono" id="meta-disk">…</span></div>
       </div>
       <button class="btn btn-ghost" onclick="loadFiles()">Refresh</button>
     </div>
@@ -383,6 +384,23 @@ async function loadFiles() {
     renderFiles();
   } catch (e) {
     toast('Failed to load files', true);
+  }
+  loadDisk();
+}
+
+async function loadDisk() {
+  const el = document.getElementById('meta-disk');
+  if (!el) return;
+  try {
+    const res = await fetch('/dashboard/api/disk');
+    const d = await res.json();
+    el.textContent =
+      'uploads ' + fmtSize(d.upload_dir_bytes) +
+      ' / ' + fmtSize(d.used_bytes) + ' used' +
+      ' / ' + fmtSize(d.total_bytes) +
+      ' (' + d.free_percent.toFixed(1) + '% free)';
+  } catch (e) {
+    el.textContent = 'unavailable';
   }
 }
 

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/encrypt0r/ingestor/internal/db"
+	"github.com/encrypt0r/ingestor/internal/diskusage"
 	"github.com/encrypt0r/ingestor/internal/filetype"
 	"github.com/encrypt0r/ingestor/internal/logging"
 	"github.com/encrypt0r/ingestor/internal/web"
@@ -22,6 +24,26 @@ type fileInfo struct {
 	Quarantined bool      `json:"quarantined"`
 	UploaderIP  string    `json:"uploader_ip"`
 	Readable    bool      `json:"readable"`
+}
+
+// DiskUsage reports storage consumed by the upload directory plus the
+// filesystem totals, so the dashboard can show a disk monitor.
+func (h *Handler) DiskUsage(w http.ResponseWriter, r *http.Request) {
+	info, err := diskusage.Summary(h.cfg.UploadDir())
+	if err != nil {
+		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
+			Status:  "error",
+			Message: "failed to read disk usage",
+		})
+		return
+	}
+	web.JSON(w, http.StatusOK, map[string]any{
+		"upload_dir_bytes": info.UploadDirBytes,
+		"used_bytes":       info.UsedBytes,
+		"total_bytes":      info.TotalBytes,
+		"free_bytes":       info.FreeBytes,
+		"free_percent":     math.Round(diskusage.FreePercent(info)*10) / 10,
+	})
 }
 
 // ListFiles returns the files currently stored in the upload directory.

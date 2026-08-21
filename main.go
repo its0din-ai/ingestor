@@ -90,6 +90,7 @@ func main() {
 	dashMux.HandleFunc("GET /dashboard/", adminHandler.Dashboard)
 	dashMux.HandleFunc("GET /dashboard", adminHandler.Dashboard)
 	dashMux.HandleFunc("GET /dashboard/api/files", adminHandler.ListFiles)
+	dashMux.HandleFunc("GET /dashboard/api/disk", adminHandler.DiskUsage)
 	dashMux.HandleFunc("GET /dashboard/download", adminHandler.Download)
 	dashMux.HandleFunc("GET /dashboard/read", adminHandler.Read)
 	dashMux.HandleFunc("POST /dashboard/delete", adminHandler.Delete)
