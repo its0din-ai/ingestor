@@ -12,6 +12,10 @@ func uaLabel(ua string) string {
 	u := strings.ToLower(ua)
 	switch {
 	// HTTP tools and downloaders.
+	case strings.Contains(u, "microsoft windows nt"):
+		// PowerShell's Invoke-WebRequest/RestMethod UA mimics Edge but carries
+		// the tell-tale "Microsoft Windows NT 10.0.xxxxx" marker.
+		return "powershell"
 	case strings.Contains(u, "curl"):
 		return "curl"
 	case strings.Contains(u, "wget"):
