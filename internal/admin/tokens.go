@@ -9,7 +9,6 @@ import (
 
 	"github.com/encrypt0r/ingestor/internal/auth"
 	"github.com/encrypt0r/ingestor/internal/config"
-	"github.com/encrypt0r/ingestor/internal/logging"
 	"github.com/encrypt0r/ingestor/internal/web"
 )
 
@@ -57,7 +56,7 @@ func (h *Handler) CreateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.auditLog.BearerChanged(logging.ClientIP(r))
+	h.auditLog.BearerChanged(r)
 	web.JSON(w, http.StatusOK, map[string]any{"token": tokenToData(bt)})
 }
 
@@ -94,7 +93,7 @@ func (h *Handler) DeleteToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.auditLog.BearerChanged(logging.ClientIP(r))
+	h.auditLog.BearerChanged(r)
 	web.JSON(w, http.StatusOK, web.ErrorResponse{Status: "ok", Message: "Token deleted"})
 }
 

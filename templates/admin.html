@@ -318,7 +318,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
       <button class="btn btn-ghost" onclick="loadAudit()">Refresh</button>
     </div>
     <table class="files-table">
-      <thead><tr><th>Time</th><th>Action</th><th>Summary</th><th>Remote IP</th></tr></thead>
+      <thead><tr><th>Time</th><th>Action</th><th>Summary</th><th>Remote IP</th><th>User-Agent</th></tr></thead>
       <tbody id="audit-body"></tbody>
     </table>
     <div class="empty" id="audit-empty" style="display:none">No audit entries yet.</div>
@@ -380,7 +380,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
         <li><strong>Files</strong> — drag-and-drop uploads with progress, search, text previews, download, quarantine/release, public sharing, and delete, with per-file status and uploader IP. Shows a live disk-usage monitor (uploads / used / total, % free).</li>
         <li><strong>Settings</strong> — hot-reload upload directory, max upload size, quarantine extensions, and admin password. Changing the admin password logs out all sessions.</li>
         <li><strong>Tokens</strong> — create, copy, and delete bearer upload tokens, each with an optional label and expiry. Omit the expiry for an indefinite token.</li>
-        <li><strong>Audit</strong> — paginated log of every login, upload, read, download, quarantine/release, settings change, and file action, pruned after the configured retention (default 90 days).</li>
+        <li><strong>Audit</strong> — paginated log of every login, upload, read, download, quarantine/release, public-share access, settings change, and file action, with client IP and User-Agent, pruned after the configured retention (default 90 days).</li>
         <li><strong>Dark / light theme</strong> and a collapsible sidebar — toggled from the sidebar, persisted in your browser.</li>
       </ul>
 
@@ -390,7 +390,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
       <h2>Public Sharing</h2>
       <p>Mark any non-quarantined file as <strong>public</strong> from the Files view (share button) to make it readable or downloadable without authentication:</p>
       <pre><code>{{.BaseURL}}/pub?name={filename}</code></pre>
-      <p>Text files are served inline as <code>text/plain</code>; everything else downloads as an attachment. Marking a file <strong>private</strong> (or quarantining/deleting it) revokes the link immediately. Private or quarantined files return <code>404</code> from <code>/pub</code>.</p>
+      <p>Text files are served inline as <code>text/plain</code>; everything else downloads as an attachment. Marking a file <strong>private</strong> (or quarantining/deleting it) revokes the link immediately. Private or quarantined files return <code>404</code> from <code>/pub</code>. Every <code>/pub</code> request — successful or denied — is recorded in the audit log with the client IP and User-Agent.</p>
 
       <h2>Security</h2>
       <ul>
@@ -985,13 +985,14 @@ function renderAudit(entries) {
       '<td>' + fmtTime(a.created_at) + '</td>' +
       '<td><span class="badge-action">' + esc(a.action) + '</span></td>' +
       '<td>' + esc(a.summary) + '</td>' +
-      '<td>' + esc(a.remote_addr || '') + '</td>';
+      '<td>' + esc(a.remote_addr || '') + '</td>' +
+      '<td class="mono" style="font-size:.78rem">' + esc(a.user_agent || '') + '</td>';
     body.appendChild(tr);
     if (a.detail) {
       const det = document.createElement('tr');
       det.className = 'audit-detail-row';
       det.style.display = 'none';
-      det.innerHTML = '<td colspan="4"><div class="audit-detail">' + esc(prettyDetail(a.detail)) + '</div></td>';
+      det.innerHTML = '<td colspan="5"><div class="audit-detail">' + esc(prettyDetail(a.detail)) + '</div></td>';
       body.appendChild(det);
     }
   }

@@ -74,7 +74,41 @@ func migrate(conn *sql.DB) error {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}
-	return migrateStoredName(conn)
+	if err := migrateStoredName(conn); err != nil {
+		return err
+	}
+	return migrateAuditUserAgent(conn)
+}
+
+// migrateAuditUserAgent adds the user_agent column to audit_log if missing.
+func migrateAuditUserAgent(conn *sql.DB) error {
+	rows, err := conn.Query(`PRAGMA table_info(audit_log)`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+
+	hasUserAgent := false
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, pk int
+		var def sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &def, &pk); err != nil {
+			return err
+		}
+		if name == "user_agent" {
+			hasUserAgent = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if !hasUserAgent {
+		_, err = conn.Exec(`ALTER TABLE audit_log ADD COLUMN user_agent TEXT NOT NULL DEFAULT ''`)
+		return err
+	}
+	return nil
 }
 
 func migrateStoredName(conn *sql.DB) error {
@@ -230,20 +264,21 @@ type AuditRecord struct {
 	Summary    string
 	Detail     string
 	RemoteAddr string
+	UserAgent  string
 	CreatedAt  time.Time
 }
 
 func InsertAudit(conn *sql.DB, r AuditRecord) error {
 	_, err := conn.Exec(
-		`INSERT INTO audit_log (action, summary, detail, remote_addr, created_at) VALUES (?, ?, ?, ?, ?)`,
-		r.Action, r.Summary, r.Detail, r.RemoteAddr, r.CreatedAt,
+		`INSERT INTO audit_log (action, summary, detail, remote_addr, user_agent, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		r.Action, r.Summary, r.Detail, r.RemoteAddr, r.UserAgent, r.CreatedAt,
 	)
 	return err
 }
 
 func ListAudit(conn *sql.DB, limit, offset int) ([]AuditRecord, error) {
 	rows, err := conn.Query(
-		`SELECT id, action, summary, detail, remote_addr, created_at FROM audit_log ORDER BY id DESC LIMIT ? OFFSET ?`,
+		`SELECT id, action, summary, detail, remote_addr, user_agent, created_at FROM audit_log ORDER BY id DESC LIMIT ? OFFSET ?`,
 		limit, offset,
 	)
 	if err != nil {
@@ -254,7 +289,7 @@ func ListAudit(conn *sql.DB, limit, offset int) ([]AuditRecord, error) {
 	var out []AuditRecord
 	for rows.Next() {
 		var a AuditRecord
-		if err := rows.Scan(&a.ID, &a.Action, &a.Summary, &a.Detail, &a.RemoteAddr, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.Action, &a.Summary, &a.Detail, &a.RemoteAddr, &a.UserAgent, &a.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

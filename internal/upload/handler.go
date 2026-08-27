@@ -246,7 +246,7 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request, src io.Reader, na
 		tokenID, tokenLabel = id.ID, id.Label
 	}
 
-	h.auditLog.Upload(logging.ClientIP(r), name, finalName, written, quarantined, tokenID, tokenLabel)
+	h.auditLog.Upload(r, name, finalName, written, quarantined, tokenID, tokenLabel)
 
 	level := slog.LevelInfo
 	if quarantined {

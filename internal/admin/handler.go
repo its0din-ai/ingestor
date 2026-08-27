@@ -51,7 +51,7 @@ func (h *Handler) LoginForm(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	remote := logging.ClientIP(r)
 	if !h.loginLimiter.Allow(remote) {
-		h.auditLog.LoginFailed(remote)
+		h.auditLog.LoginFailed(r)
 		web.JSON(w, http.StatusTooManyRequests, web.ErrorResponse{
 			Status:  "error",
 			Message: "too many login attempts, try again later",
@@ -60,7 +60,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	password := r.FormValue("password")
 	if !h.cfg.VerifyAdminPassword(password) {
-		h.auditLog.LoginFailed(remote)
+		h.auditLog.LoginFailed(r)
 		csrf := auth.CSRFToken(r)
 		h.render(w, r, "login", csrf, nil, "invalid password")
 		return
@@ -69,12 +69,12 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	h.auditLog.LoginSuccess(logging.ClientIP(r))
+	h.auditLog.LoginSuccess(r)
 	http.Redirect(w, r, "/dashboard/", http.StatusSeeOther)
 }
 
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
-	h.auditLog.Logout(logging.ClientIP(r))
+	h.auditLog.Logout(r)
 	h.sessions.EndSession(r, w)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
@@ -150,7 +150,6 @@ func (h *Handler) SaveSettingsJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	remote := logging.ClientIP(r)
 	var changed []string
 
 	if req.UploadDir != "" {
@@ -199,7 +198,7 @@ func (h *Handler) SaveSettingsJSON(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		changed = append(changed, "bearer_tokens")
-		h.auditLog.BearerChanged(remote)
+		h.auditLog.BearerChanged(r)
 	}
 	if req.AdminPassword != "" {
 		if !h.cfg.VerifyAdminPassword(req.CurrentPassword) {
@@ -214,7 +213,7 @@ func (h *Handler) SaveSettingsJSON(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		changed = append(changed, "admin_password")
-		h.auditLog.PasswordChanged(remote)
+		h.auditLog.PasswordChanged(r)
 		// Force every active session to re-authenticate.
 		if err := db.DeleteAllSessions(h.conn); err != nil {
 			slog.Warn("failed to invalidate sessions after password change", "err", err)
@@ -222,7 +221,7 @@ func (h *Handler) SaveSettingsJSON(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(changed) > 0 {
-		h.auditLog.SettingsChanged(remote, changed)
+		h.auditLog.SettingsChanged(r, changed)
 	}
 
 	web.JSON(w, http.StatusOK, web.ErrorResponse{

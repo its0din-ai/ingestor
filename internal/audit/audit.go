@@ -3,9 +3,11 @@ package audit
 import (
 	"database/sql"
 	"encoding/json"
+	"net/http"
 	"time"
 
 	"github.com/encrypt0r/ingestor/internal/db"
+	"github.com/encrypt0r/ingestor/internal/logging"
 )
 
 // Action is a machine-readable audit event type.
@@ -24,6 +26,8 @@ const (
 	ActionRelease         Action = "release"
 	ActionMarkPublic      Action = "mark_public"
 	ActionMarkPrivate     Action = "mark_private"
+	ActionPublicOpen      Action = "public_open"
+	ActionPublicDenied    Action = "public_denied"
 	ActionSettingsChanged Action = "settings_changed"
 	ActionPasswordChanged Action = "password_changed"
 	ActionBearerChanged   Action = "bearer_changed"
@@ -37,39 +41,47 @@ func New(conn *sql.DB) *Logger {
 	return &Logger{conn: conn}
 }
 
-func (l *Logger) record(action Action, summary string, detail map[string]any, remote string) {
+// record stores an audit entry. The client IP and User-Agent are derived from
+// the request so every entry carries consistent attribution.
+func (l *Logger) record(action Action, summary string, detail map[string]any, r *http.Request) {
 	d := ""
 	if detail != nil {
 		if b, err := json.Marshal(detail); err == nil {
 			d = string(b)
 		}
 	}
+	remote, ua := "", ""
+	if r != nil {
+		remote = logging.ClientIP(r)
+		ua = r.UserAgent()
+	}
 	_ = db.InsertAudit(l.conn, db.AuditRecord{
 		Action:     string(action),
 		Summary:    summary,
 		Detail:     d,
 		RemoteAddr: remote,
+		UserAgent:  ua,
 		CreatedAt:  time.Now(),
 	})
 }
 
-func (l *Logger) LoginFailed(remote string) {
-	l.record(ActionLoginFailed, "failed admin login attempt", nil, remote)
+func (l *Logger) LoginFailed(r *http.Request) {
+	l.record(ActionLoginFailed, "failed admin login attempt", nil, r)
 }
 
-func (l *Logger) LoginSuccess(remote string) {
-	l.record(ActionLoginSuccess, "admin logged in", nil, remote)
+func (l *Logger) LoginSuccess(r *http.Request) {
+	l.record(ActionLoginSuccess, "admin logged in", nil, r)
 }
 
-func (l *Logger) Logout(remote string) {
-	l.record(ActionLogout, "admin logged out", nil, remote)
+func (l *Logger) Logout(r *http.Request) {
+	l.record(ActionLogout, "admin logged out", nil, r)
 }
 
-func (l *Logger) BearerFailed(remote, path string) {
-	l.record(ActionBearerFailed, "failed bearer authentication", map[string]any{"path": path}, remote)
+func (l *Logger) BearerFailed(r *http.Request, path string) {
+	l.record(ActionBearerFailed, "failed bearer authentication", map[string]any{"path": path}, r)
 }
 
-func (l *Logger) Upload(remote, originalName, storedName string, size int64, quarantined bool, tokenID, tokenLabel string) {
+func (l *Logger) Upload(r *http.Request, originalName, storedName string, size int64, quarantined bool, tokenID, tokenLabel string) {
 	summary := "file uploaded: " + originalName
 	if tokenID != "" {
 		summary = "bearer token id " + tokenID + " used for upload: " + originalName
@@ -86,45 +98,53 @@ func (l *Logger) Upload(remote, originalName, storedName string, size int64, qua
 	if tokenLabel != "" {
 		detail["token_label"] = tokenLabel
 	}
-	l.record(ActionUpload, summary, detail, remote)
+	l.record(ActionUpload, summary, detail, r)
 }
 
-func (l *Logger) Download(remote, name string) {
-	l.record(ActionDownload, "file downloaded: "+name, map[string]any{"stored_name": name}, remote)
+func (l *Logger) Download(r *http.Request, name string) {
+	l.record(ActionDownload, "file downloaded: "+name, map[string]any{"stored_name": name}, r)
 }
 
-func (l *Logger) Read(remote, name string) {
-	l.record(ActionRead, "file read: "+name, map[string]any{"stored_name": name}, remote)
+func (l *Logger) Read(r *http.Request, name string) {
+	l.record(ActionRead, "file read: "+name, map[string]any{"stored_name": name}, r)
 }
 
-func (l *Logger) Delete(remote, name string) {
-	l.record(ActionDelete, "file deleted: "+name, map[string]any{"stored_name": name}, remote)
+func (l *Logger) Delete(r *http.Request, name string) {
+	l.record(ActionDelete, "file deleted: "+name, map[string]any{"stored_name": name}, r)
 }
 
-func (l *Logger) Quarantine(remote, name string) {
-	l.record(ActionQuarantine, "file quarantined: "+name, map[string]any{"stored_name": name}, remote)
+func (l *Logger) Quarantine(r *http.Request, name string) {
+	l.record(ActionQuarantine, "file quarantined: "+name, map[string]any{"stored_name": name}, r)
 }
 
-func (l *Logger) Release(remote, name string) {
-	l.record(ActionRelease, "file released from quarantine: "+name, map[string]any{"stored_name": name}, remote)
+func (l *Logger) Release(r *http.Request, name string) {
+	l.record(ActionRelease, "file released from quarantine: "+name, map[string]any{"stored_name": name}, r)
 }
 
-func (l *Logger) MarkPublic(remote, name string) {
-	l.record(ActionMarkPublic, "file marked public: "+name, map[string]any{"stored_name": name}, remote)
+func (l *Logger) MarkPublic(r *http.Request, name string) {
+	l.record(ActionMarkPublic, "file marked public: "+name, map[string]any{"stored_name": name}, r)
 }
 
-func (l *Logger) MarkPrivate(remote, name string) {
-	l.record(ActionMarkPrivate, "file made private: "+name, map[string]any{"stored_name": name}, remote)
+func (l *Logger) MarkPrivate(r *http.Request, name string) {
+	l.record(ActionMarkPrivate, "file made private: "+name, map[string]any{"stored_name": name}, r)
 }
 
-func (l *Logger) SettingsChanged(remote string, fields []string) {
-	l.record(ActionSettingsChanged, "settings updated", map[string]any{"fields": fields}, remote)
+func (l *Logger) PublicOpen(r *http.Request, name string) {
+	l.record(ActionPublicOpen, "public file opened: "+name, map[string]any{"stored_name": name}, r)
 }
 
-func (l *Logger) PasswordChanged(remote string) {
-	l.record(ActionPasswordChanged, "admin password changed", nil, remote)
+func (l *Logger) PublicDenied(r *http.Request, name, reason string) {
+	l.record(ActionPublicDenied, "public file access denied: "+name, map[string]any{"stored_name": name, "reason": reason}, r)
 }
 
-func (l *Logger) BearerChanged(remote string) {
-	l.record(ActionBearerChanged, "bearer token changed", nil, remote)
+func (l *Logger) SettingsChanged(r *http.Request, fields []string) {
+	l.record(ActionSettingsChanged, "settings updated", map[string]any{"fields": fields}, r)
+}
+
+func (l *Logger) PasswordChanged(r *http.Request) {
+	l.record(ActionPasswordChanged, "admin password changed", nil, r)
+}
+
+func (l *Logger) BearerChanged(r *http.Request) {
+	l.record(ActionBearerChanged, "bearer token changed", nil, r)
 }

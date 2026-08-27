@@ -13,7 +13,6 @@ import (
 	"github.com/encrypt0r/ingestor/internal/db"
 	"github.com/encrypt0r/ingestor/internal/diskusage"
 	"github.com/encrypt0r/ingestor/internal/filetype"
-	"github.com/encrypt0r/ingestor/internal/logging"
 	"github.com/encrypt0r/ingestor/internal/web"
 )
 
@@ -171,7 +170,7 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 
 	name := filepath.Base(path)
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+headerFilename(name)+"\"")
-	h.auditLog.Download(logging.ClientIP(r), name)
+	h.auditLog.Download(r, name)
 	http.ServeFile(w, r, path)
 }
 
@@ -213,7 +212,7 @@ func (h *Handler) Read(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := filepath.Base(path)
-	h.auditLog.Read(logging.ClientIP(r), name)
+	h.auditLog.Read(r, name)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", "inline; filename=\""+headerFilename(name)+"\"")
 	http.ServeFile(w, r, path)
@@ -266,7 +265,7 @@ func (h *Handler) Quarantine(w http.ResponseWriter, r *http.Request) {
 	if db.IsPublic(h.conn, name) {
 		_ = db.MarkPrivate(h.conn, name)
 	}
-	h.auditLog.Quarantine(logging.ClientIP(r), name)
+	h.auditLog.Quarantine(r, name)
 
 	web.JSON(w, http.StatusOK, web.ErrorResponse{
 		Status:  "ok",
@@ -325,7 +324,7 @@ func (h *Handler) Release(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = db.SetUploadQuarantined(h.conn, base, false)
-	h.auditLog.Release(logging.ClientIP(r), base)
+	h.auditLog.Release(r, base)
 
 	web.JSON(w, http.StatusOK, web.ErrorResponse{
 		Status:  "ok",
@@ -377,7 +376,7 @@ func (h *Handler) MarkPublic(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	h.auditLog.MarkPublic(logging.ClientIP(r), name)
+	h.auditLog.MarkPublic(r, name)
 
 	web.JSON(w, http.StatusOK, web.ErrorResponse{Status: "ok", Message: "File is now public"})
 }
@@ -408,16 +407,19 @@ func (h *Handler) MarkPrivate(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	h.auditLog.MarkPrivate(logging.ClientIP(r), name)
+	h.auditLog.MarkPrivate(r, name)
 
 	web.JSON(w, http.StatusOK, web.ErrorResponse{Status: "ok", Message: "File is now private"})
 }
 
 // PublicFile serves a publicly shared file without authentication. Files not
 // marked public (or quarantined) are indistinguishable from missing files.
+// Every access attempt — successful or denied — is written to the audit log.
 func (h *Handler) PublicFile(w http.ResponseWriter, r *http.Request) {
-	path, ok := h.storedPath(r.URL.Query().Get("name"))
+	requested := r.URL.Query().Get("name")
+	path, ok := h.storedPath(requested)
 	if !ok {
+		h.auditLog.PublicDenied(r, requested, "invalid_name")
 		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
 			Status:  "error",
 			Message: "file not available",
@@ -425,6 +427,8 @@ func (h *Handler) PublicFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.fileExists(path) {
+		name := filepath.Base(path)
+		h.auditLog.PublicDenied(r, name, "not_found")
 		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
 			Status:  "error",
 			Message: "file not available",
@@ -434,12 +438,19 @@ func (h *Handler) PublicFile(w http.ResponseWriter, r *http.Request) {
 
 	name := filepath.Base(path)
 	if strings.HasSuffix(name, ".quarantined") || !db.IsPublic(h.conn, name) {
+		reason := "not_public"
+		if strings.HasSuffix(name, ".quarantined") {
+			reason = "quarantined"
+		}
+		h.auditLog.PublicDenied(r, name, reason)
 		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
 			Status:  "error",
 			Message: "file not available",
 		})
 		return
 	}
+
+	h.auditLog.PublicOpen(r, name)
 
 	// Text files are served inline as text/plain for reading; everything else
 	// is an attachment download.
@@ -479,7 +490,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.auditLog.Delete(logging.ClientIP(r), filepath.Base(path))
+	h.auditLog.Delete(r, filepath.Base(path))
 
 	web.JSON(w, http.StatusOK, web.ErrorResponse{
 		Status:  "ok",
@@ -519,6 +530,7 @@ func (h *Handler) ListAudit(w http.ResponseWriter, r *http.Request) {
 		Summary    string `json:"summary"`
 		Detail     string `json:"detail"`
 		RemoteAddr string `json:"remote_addr"`
+		UserAgent  string `json:"user_agent"`
 		CreatedAt  string `json:"created_at"`
 	}
 
@@ -530,6 +542,7 @@ func (h *Handler) ListAudit(w http.ResponseWriter, r *http.Request) {
 			Summary:    a.Summary,
 			Detail:     a.Detail,
 			RemoteAddr: a.RemoteAddr,
+			UserAgent:  a.UserAgent,
 			CreatedAt:  a.CreatedAt.Format(time.RFC3339),
 		})
 	}
