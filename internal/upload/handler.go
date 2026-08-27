@@ -248,7 +248,7 @@ func sanitizeName(name string) string {
 	}
 	name = strings.TrimLeft(name, ".")
 	name = strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
+		if r < 0x20 || r == 0x7f || r == '"' {
 			return -1
 		}
 		return r

@@ -125,7 +125,7 @@ func (h *Handler) SettingsJSON(w http.ResponseWriter, r *http.Request) {
 		tokens = append(tokens, data)
 	}
 	data := settingsData{
-		UploadDir:            h.cfg.UploadDir(),
+		UploadDir:            h.cfg.UploadDirRelative(),
 		MaxUploadMB:          h.cfg.MaxUploadMB(),
 		QuarantineExtensions: h.cfg.QuarantineExtensions(),
 		BearerTokens:         tokens,

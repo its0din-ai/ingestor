@@ -122,6 +122,52 @@ func TestJWTSecretBase64(t *testing.T) {
 	}
 }
 
+func TestNormalizeUploadDir(t *testing.T) {
+	c := &Config{root: "/srv/ingestor"}
+	tests := []struct{ in, want string }{
+		{"uploads", "uploads"},
+		{"/etc", "etc"},
+		{"etc", "etc"},
+		{"uploads/", "uploads"},
+		{"../../etc", "."},
+		{"../escape", "."},
+		{"..", "."},
+		{".", "."},
+		{"/", "."},
+		{"", "."},
+		{`..\..\evil`, "."},
+		{"/abs/path/here", "abs/path/here"},
+		{"a/../b", "b"},
+	}
+	for _, tt := range tests {
+		if got := c.normalizeUploadDir(tt.in); got != tt.want {
+			t.Errorf("normalizeUploadDir(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestUploadDirStaysInRoot(t *testing.T) {
+	c := &Config{root: "/srv/ingestor", uploadDir: "etc"}
+	if got := c.UploadDir(); got != "/srv/ingestor/etc" {
+		t.Fatalf("UploadDir = %q, want /srv/ingestor/etc", got)
+	}
+	if got := c.UploadDirRelative(); got != "etc" {
+		t.Fatalf("UploadDirRelative = %q, want etc", got)
+	}
+
+	root := &Config{root: "/srv/ingestor", uploadDir: "."}
+	if got := root.UploadDir(); got != "/srv/ingestor" {
+		t.Fatalf("UploadDir with '.' = %q, want /srv/ingestor", got)
+	}
+
+	// Simulate the admin setting /etc: it must resolve under root.
+	c2 := &Config{root: "/srv/ingestor"}
+	c2.uploadDir = c2.normalizeUploadDir("/etc")
+	if got := c2.UploadDir(); got != "/srv/ingestor/etc" {
+		t.Fatalf("UploadDir after /etc = %q, want /srv/ingestor/etc", got)
+	}
+}
+
 func TestDurationEnv(t *testing.T) {
 	if got := durationEnv("session_ttl", 24*time.Hour); got != 24*time.Hour {
 		t.Fatalf("missing env should fall back, got %v", got)

@@ -68,6 +68,11 @@ func (h *Handler) ListFiles(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
+		// Skip symbolic links: access handlers refuse them, and they must not
+		// appear in the listing either (potential LFI redirect).
+		if info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
 		ip, _ := db.UploaderIP(h.conn, e.Name())
 		readable, _ := filetype.IsText(filepath.Join(dir, e.Name()))
 		files = append(files, fileInfo{
@@ -89,19 +94,60 @@ func (h *Handler) ListFiles(w http.ResponseWriter, r *http.Request) {
 }
 
 // storedPath validates name as a single path component inside the upload
-// directory, preventing traversal outside it. It returns the resolved path
-// and whether the name was acceptable.
+// directory, preventing traversal, LFI, and header injection. It returns the
+// resolved path and whether the name was acceptable.
 func (h *Handler) storedPath(name string) (string, bool) {
-	name = filepath.Base(name)
-	if name == "." || name == "" {
+	return resolveStoredPath(h.cfg.UploadDir(), name)
+}
+
+// resolveStoredPath performs the actual validation so it can be unit tested.
+// Stored files always have a single-component name, so any input containing
+// a path separator, parent references, or control bytes is rejected outright
+// (no normalization tricks, no dot-segment collapsing). The resolved path
+// must also stay inside the upload directory.
+func resolveStoredPath(dir, name string) (string, bool) {
+	if dir == "" {
 		return "", false
 	}
-	dir := h.cfg.UploadDir()
-	path := filepath.Join(dir, name)
-	if !strings.HasPrefix(path, filepath.Clean(dir)+string(os.PathSeparator)) {
+	// Windows-style separators are treated as hostile input and rejected.
+	name = strings.ReplaceAll(name, "\\", "/")
+	if name == "" || strings.Contains(name, "/") {
+		return "", false
+	}
+	if name == "." || name == ".." {
+		return "", false
+	}
+	for _, c := range name {
+		if c < 0x20 || c == 0x7f {
+			return "", false
+		}
+	}
+
+	dirClean := filepath.Clean(dir)
+	absDir, err := filepath.Abs(dirClean)
+	if err != nil {
+		return "", false
+	}
+	path := filepath.Join(dirClean, name)
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", false
+	}
+	if absPath != absDir && !strings.HasPrefix(absPath, absDir+string(os.PathSeparator)) {
 		return "", false
 	}
 	return path, true
+}
+
+// headerFilename returns a name that is safe to embed in a Content-Disposition
+// header value (no quotes, backslashes, or control characters).
+func headerFilename(name string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '"' || r == '\\' || r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, name)
 }
 
 // Download serves a stored file.
@@ -115,8 +161,7 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
+	if !h.fileExists(path) {
 		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
 			Status:  "error",
 			Message: "file not found",
@@ -125,7 +170,7 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := filepath.Base(path)
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+headerFilename(name)+"\"")
 	h.auditLog.Download(logging.ClientIP(r), name)
 	http.ServeFile(w, r, path)
 }
@@ -143,8 +188,7 @@ func (h *Handler) Read(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
+	if !h.fileExists(path) {
 		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
 			Status:  "error",
 			Message: "file not found",
@@ -171,7 +215,7 @@ func (h *Handler) Read(w http.ResponseWriter, r *http.Request) {
 	name := filepath.Base(path)
 	h.auditLog.Read(logging.ClientIP(r), name)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Content-Disposition", "inline; filename=\""+name+"\"")
+	w.Header().Set("Content-Disposition", "inline; filename=\""+headerFilename(name)+"\"")
 	http.ServeFile(w, r, path)
 }
 
@@ -289,9 +333,15 @@ func (h *Handler) Release(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// fileExists reports whether path is a regular (non-symlink) file. Symlinks
+// are rejected so a compromised upload directory cannot redirect reads to
+// arbitrary files on disk.
 func (h *Handler) fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
+	info, err := os.Lstat(path)
+	if err != nil || info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return false
+	}
+	return true
 }
 
 // MarkPublic registers a stored file for anonymous access via /pub.
@@ -395,9 +445,9 @@ func (h *Handler) PublicFile(w http.ResponseWriter, r *http.Request) {
 	// is an attachment download.
 	if text, _ := filetype.IsText(path); text {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Content-Disposition", "inline; filename=\""+name+"\"")
+		w.Header().Set("Content-Disposition", "inline; filename=\""+headerFilename(name)+"\"")
 	} else {
-		w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
+		w.Header().Set("Content-Disposition", "attachment; filename=\""+headerFilename(name)+"\"")
 	}
 	http.ServeFile(w, r, path)
 }
@@ -413,8 +463,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
+	if !h.fileExists(path) {
 		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
 			Status:  "error",
 			Message: "file not found",

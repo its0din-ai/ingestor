@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	pathpkg "path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,6 +48,9 @@ type Config struct {
 	mu   sync.RWMutex
 	conn *sql.DB
 
+	// root is the project root (the app's working directory). The upload
+	// directory is always constrained to live underneath it.
+	root          string
 	host          string
 	port          int
 	uploadDir     string
@@ -56,7 +61,11 @@ type Config struct {
 }
 
 func Load(conn *sql.DB) (*Config, error) {
-	c := &Config{conn: conn}
+	root, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("resolve working directory: %w", err)
+	}
+	c := &Config{conn: conn, root: root}
 	if _, err := c.JWTSecret(); err != nil {
 		return nil, err
 	}
@@ -71,7 +80,7 @@ func Load(conn *sql.DB) (*Config, error) {
 
 func (c *Config) seed() error {
 	if _, err := c.conn.Exec(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`,
-		keyUploadDir, envOr("upload_dir", "uploads")); err != nil {
+		keyUploadDir, c.normalizeUploadDir(envOr("upload_dir", "uploads"))); err != nil {
 		return err
 	}
 	if _, err := c.conn.Exec(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`,
@@ -145,7 +154,7 @@ func (c *Config) refresh() error {
 	defer c.mu.Unlock()
 	c.host = envOr("host", "127.0.0.1")
 	c.port = port
-	c.uploadDir = values[keyUploadDir]
+	c.uploadDir = c.normalizeUploadDir(values[keyUploadDir])
 	c.maxUploadMB = maxMB
 	c.quarantineExt = splitExtensions(values[keyQuarantineExtensions])
 	c.bearerTokens = tokens
@@ -295,10 +304,43 @@ func (c *Config) CookieSecure() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv("cookie_secure")), "true")
 }
 
+// UploadDir returns the resolved upload directory as an absolute path. It is
+// always constrained to live inside the project root: an admin-supplied value
+// like /etc resolves to <root>/etc, never to the OS root.
 func (c *Config) UploadDir() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	return filepath.Join(c.root, c.uploadDir)
+}
+
+// UploadDirRelative returns the stored, root-relative upload directory. It is
+// used by the settings UI so the field round-trips idempotently.
+func (c *Config) UploadDirRelative() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.uploadDir
+}
+
+// normalizeUploadDir constrains an admin-supplied upload directory to the
+// project root. Absolute paths (e.g. /etc) are made relative so they resolve
+// to ./etc under the root, and any parent traversal is clamped back to the
+// root itself. The returned value is a clean root-relative path.
+func (c *Config) normalizeUploadDir(dir string) string {
+	dir = strings.ReplaceAll(dir, "\\", "/")
+	dir = strings.TrimSpace(dir)
+	if dir == "" || dir == "/" {
+		return "."
+	}
+	rel := strings.TrimLeft(dir, "/")
+	clean := pathpkg.Clean(rel)
+	if clean == "." || clean == "" {
+		return "."
+	}
+	// Never allow escaping the project root.
+	if clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") {
+		return "."
+	}
+	return clean
 }
 
 func (c *Config) MaxUploadMB() int64 {
@@ -348,7 +390,7 @@ func (c *Config) VerifyAdminPassword(password string) bool {
 }
 
 func (c *Config) SetUploadDir(dir string) error {
-	return c.setSetting(keyUploadDir, dir)
+	return c.setSetting(keyUploadDir, c.normalizeUploadDir(dir))
 }
 
 func (c *Config) SetMaxUploadMB(mb int64) error {
