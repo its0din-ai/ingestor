@@ -83,8 +83,14 @@ func (l *Logger) BearerFailed(r *http.Request, path string) {
 
 func (l *Logger) Upload(r *http.Request, originalName, storedName string, size int64, quarantined bool, tokenID, tokenLabel string) {
 	summary := "file uploaded: " + originalName
-	if tokenID != "" {
-		summary = "bearer token id " + tokenID + " used for upload: " + originalName
+	if tokenID != "" || tokenLabel != "" {
+		// Prefer the configured label for attribution; fall back to the
+		// token's short id fingerprint when no label is set.
+		if tokenLabel != "" {
+			summary = "bearer token " + tokenLabel + " used for upload: " + originalName
+		} else {
+			summary = "bearer token id " + tokenID + " used for upload: " + originalName
+		}
 	}
 	detail := map[string]any{
 		"original_name": originalName,
