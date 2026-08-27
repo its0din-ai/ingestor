@@ -86,7 +86,7 @@ func (h *Handler) handleMultipart(w http.ResponseWriter, r *http.Request, maxByt
 		if part.FileName() == "" {
 			continue
 		}
-		h.save(w, r, part, sanitizeName(part.FileName()), maxBytes)
+		h.save(w, r, part, sanitizeName(part.FileName()), maxBytes, false)
 		_ = part.Close()
 		return
 	}
@@ -99,7 +99,41 @@ func (h *Handler) handleRaw(w http.ResponseWriter, r *http.Request, maxBytes int
 	if name == "" {
 		name = "upload-" + strconv.FormatInt(time.Now().Unix(), 10)
 	}
-	h.save(w, r, r.Body, name, maxBytes)
+	h.save(w, r, r.Body, name, maxBytes, false)
+}
+
+// UploadBrowser stores a multipart file using its original name (no random
+// suffix), for session-authenticated browser uploads from the dashboard. If
+// a file with the same name already exists the upload is refused so nothing
+// is silently overwritten.
+func (h *Handler) UploadBrowser(w http.ResponseWriter, r *http.Request) {
+	maxBytes := h.cfg.MaxUploadBytes()
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+
+	reader, err := r.MultipartReader()
+	if err != nil {
+		h.fail(w, http.StatusBadRequest, "invalid multipart request")
+		return
+	}
+
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			h.fail(w, http.StatusBadRequest, "invalid multipart part")
+			return
+		}
+		if part.FileName() == "" {
+			continue
+		}
+		h.save(w, r, part, sanitizeName(part.FileName()), maxBytes, true)
+		_ = part.Close()
+		return
+	}
+
+	h.fail(w, http.StatusBadRequest, "no file part found")
 }
 
 func rawFilename(r *http.Request) string {
@@ -115,7 +149,10 @@ func rawFilename(r *http.Request) string {
 	return ""
 }
 
-func (h *Handler) save(w http.ResponseWriter, r *http.Request, src io.Reader, name string, maxBytes int64) {
+// save streams src into the upload dir as name. When keepName is true the
+// name is used verbatim (refusing to overwrite an existing file); otherwise
+// a random suffix is appended so concurrent arbitrary uploads never collide.
+func (h *Handler) save(w http.ResponseWriter, r *http.Request, src io.Reader, name string, maxBytes int64, keepName bool) {
 	dir := h.cfg.UploadDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		h.fail(w, http.StatusInternalServerError, "failed to prepare upload directory")
@@ -152,23 +189,36 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request, src io.Reader, na
 
 	quarantined := quarantine.IsQuarantined(name, h.cfg.QuarantineExtensions())
 
-	finalName := suffixRandom(name)
+	finalName := name
+	if !keepName {
+		finalName = suffixRandom(name)
+	}
 	if quarantined {
 		finalName += ".quarantined"
 	}
 	finalPath := filepath.Join(dir, finalName)
-	// Guard against a name collision from a concurrent upload with the same
-	// random suffix: os.Rename would silently overwrite, so retry with a
-	// fresh suffix.
-	for i := 0; i < 5; i++ {
-		if _, err := os.Stat(finalPath); os.IsNotExist(err) {
-			break
+
+	if keepName {
+		// Browser uploads keep the original name: refuse to silently
+		// overwrite an existing file.
+		if _, err := os.Stat(finalPath); err == nil {
+			h.fail(w, http.StatusConflict, "a file with that name already exists")
+			return
 		}
-		finalName = suffixRandom(name)
-		if quarantined {
-			finalName += ".quarantined"
+	} else {
+		// Guard against a name collision from a concurrent upload with the
+		// same random suffix: os.Rename would silently overwrite, so retry
+		// with a fresh suffix.
+		for i := 0; i < 5; i++ {
+			if _, err := os.Stat(finalPath); os.IsNotExist(err) {
+				break
+			}
+			finalName = suffixRandom(name)
+			if quarantined {
+				finalName += ".quarantined"
+			}
+			finalPath = filepath.Join(dir, finalName)
 		}
-		finalPath = filepath.Join(dir, finalName)
 	}
 
 	if err := os.Rename(tmpName, finalPath); err != nil {

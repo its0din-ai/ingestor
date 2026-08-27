@@ -350,18 +350,18 @@ textarea:focus{outline:none;border-color:var(--accent)}
       <p>The admin console uses a JWT (HS512) session cookie named <code>session</code>. Logging out destroys the token server-side, and changing the admin password signs out every active session. Login is rate limited to 15 attempts per 15 minutes per IP.</p>
 
       <h2>Upload API</h2>
+      <p>Two upload paths exist:</p>
       <table>
-        <thead><tr><th>Endpoint</th><th>Method</th><th>Purpose</th></tr></thead>
+        <thead><tr><th>Endpoint</th><th>Auth</th><th>Purpose</th><th>Stored name</th></tr></thead>
         <tbody>
-          <tr><td><code>{{.BaseURL}}/upload</code></td><td>POST / PUT</td><td>Upload a single file</td></tr>
-          <tr><td><code>{{.BaseURL}}/</code> (any path)</td><td>non-GET</td><td>Accept-and-log sink for any request</td></tr>
+          <tr><td><code>{{.BaseURL}}/upload</code></td><td>Bearer token</td><td>Arbitrary file upload (script/curl/agents)</td><td>Original name + random suffix (no collisions)</td></tr>
+          <tr><td><code>{{.BaseURL}}/dashboard/upload</code></td><td>Admin session</td><td>Browser upload from the Files view</td><td>Original name, kept as-is (refuses duplicates)</td></tr>
+          <tr><td><code>{{.BaseURL}}/</code> (any path)</td><td>Bearer token</td><td>Accept-and-log sink for any request</td><td>—</td></tr>
         </tbody>
       </table>
-      <h3>Multipart form</h3>
+      <h3>Arbitrary upload (token)</h3>
       <pre><code>curl -H "Authorization: Bearer $TOKEN" -F "file=@myfile.txt" {{.BaseURL}}/upload</code></pre>
-      <h3>PUT raw body</h3>
       <pre><code>curl -H "Authorization: Bearer $TOKEN" -T myfile.txt {{.BaseURL}}/upload</code></pre>
-      <h3>POST raw body with filename</h3>
       <pre><code>curl -H "Authorization: Bearer $TOKEN" --data-binary @myfile.txt "{{.BaseURL}}/upload?name=myfile.txt"</code></pre>
       <p>The original filename is resolved from the multipart part, a <code>Content-Disposition</code> header, the <code>?name=</code> query param, or falls back to <code>upload-&lt;unix-timestamp&gt;</code>.</p>
 

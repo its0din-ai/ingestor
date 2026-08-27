@@ -102,7 +102,7 @@ func main() {
 	dashMux.HandleFunc("POST /dashboard/release", adminHandler.Release)
 	dashMux.HandleFunc("POST /dashboard/public", adminHandler.MarkPublic)
 	dashMux.HandleFunc("POST /dashboard/private", adminHandler.MarkPrivate)
-	dashMux.Handle("POST /dashboard/upload", uploadHandler)
+	dashMux.Handle("POST /dashboard/upload", http.HandlerFunc(uploadHandler.UploadBrowser))
 	dashMux.HandleFunc("GET /dashboard/api/settings", adminHandler.SettingsJSON)
 	dashMux.HandleFunc("POST /dashboard/api/settings", adminHandler.SaveSettingsJSON)
 	dashMux.HandleFunc("GET /dashboard/api/audit", adminHandler.ListAudit)
