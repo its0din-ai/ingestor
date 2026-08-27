@@ -296,7 +296,7 @@ func (c *Config) SessionTTL() time.Duration {
 // AuditRetention is how long audit entries are kept before pruning. Zero
 // means never prune.
 func (c *Config) AuditRetention() time.Duration {
-	return durationEnv("audit_retention", 90*24*time.Hour)
+	return durationEnv("audit_retention", 30*24*time.Hour)
 }
 
 // CookieSecure marks the session cookie as Secure (HTTPS only).
