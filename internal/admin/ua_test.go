@@ -15,6 +15,8 @@ func TestUALabel(t *testing.T) {
 		{"PostmanRuntime/7.32.0", "postman"},
 		{"insomnia/2023.1.0", "insomnia"},
 		{"Mozilla/5.0 (Windows NT 10.0; Microsoft Windows NT 10.0.17763) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.140 Safari/537.36 Edge/18.17763", "powershell"},
+		{"Mozilla/5.0 (Windows NT; Windows NT 10.0; en-US) WindowsPowerShell/5.1.26100.9168", "powershell"},
+		{"Mozilla/5.0 (Windows NT 10.0; Win64; x64) PowerShell/7.3.0", "powershell"},
 		{"axios/1.6.0", "axios"},
 		{"okhttp/4.12.0", "okhttp"},
 		{"Node.js/20.0.0", "node"},
