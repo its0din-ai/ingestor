@@ -65,6 +65,10 @@ func main() {
 		web.JSON(w, http.StatusOK, web.ErrorResponse{Status: "ok", Message: "healthy"})
 	})
 
+	// Publicly shared files: unauthenticated read/download, access controlled
+	// by the public_files allowlist.
+	mux.HandleFunc("GET /pub", adminHandler.PublicFile)
+
 	// root: GET redirects to login/dashboard; other methods are the
 	// bearer-protected upload sink (accept-and-log-everything).
 	rootRedirect := sessions.Root()
@@ -96,6 +100,8 @@ func main() {
 	dashMux.HandleFunc("POST /dashboard/delete", adminHandler.Delete)
 	dashMux.HandleFunc("POST /dashboard/quarantine", adminHandler.Quarantine)
 	dashMux.HandleFunc("POST /dashboard/release", adminHandler.Release)
+	dashMux.HandleFunc("POST /dashboard/public", adminHandler.MarkPublic)
+	dashMux.HandleFunc("POST /dashboard/private", adminHandler.MarkPrivate)
 	dashMux.Handle("POST /dashboard/upload", uploadHandler)
 	dashMux.HandleFunc("GET /dashboard/api/settings", adminHandler.SettingsJSON)
 	dashMux.HandleFunc("POST /dashboard/api/settings", adminHandler.SaveSettingsJSON)

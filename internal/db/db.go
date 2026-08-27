@@ -36,6 +36,10 @@ var migrations = []string{
 		remote_addr TEXT NOT NULL,
 		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);`,
+	`CREATE TABLE IF NOT EXISTS public_files (
+		stored_name TEXT PRIMARY KEY,
+		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);`,
 }
 
 func Open(path string) (*sql.DB, error) {
@@ -137,6 +141,25 @@ func DeleteExpiredSessions(conn *sql.DB, now time.Time) error {
 func DeleteAuditOlderThan(conn *sql.DB, cutoff time.Time) error {
 	_, err := conn.Exec(`DELETE FROM audit_log WHERE created_at < ?`, cutoff)
 	return err
+}
+
+// MarkPublic registers a stored file as publicly shareable via /pub.
+func MarkPublic(conn *sql.DB, storedName string) error {
+	_, err := conn.Exec(`INSERT OR IGNORE INTO public_files (stored_name) VALUES (?)`, storedName)
+	return err
+}
+
+// MarkPrivate revokes public access for a stored file.
+func MarkPrivate(conn *sql.DB, storedName string) error {
+	_, err := conn.Exec(`DELETE FROM public_files WHERE stored_name = ?`, storedName)
+	return err
+}
+
+// IsPublic reports whether a stored file is marked publicly shareable.
+func IsPublic(conn *sql.DB, storedName string) bool {
+	var n int
+	err := conn.QueryRow(`SELECT COUNT(*) FROM public_files WHERE stored_name = ?`, storedName).Scan(&n)
+	return err == nil && n > 0
 }
 
 type UploadRecord struct {

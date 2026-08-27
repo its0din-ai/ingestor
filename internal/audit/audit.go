@@ -22,6 +22,8 @@ const (
 	ActionDelete          Action = "delete"
 	ActionQuarantine      Action = "quarantine"
 	ActionRelease         Action = "release"
+	ActionMarkPublic      Action = "mark_public"
+	ActionMarkPrivate     Action = "mark_private"
 	ActionSettingsChanged Action = "settings_changed"
 	ActionPasswordChanged Action = "password_changed"
 	ActionBearerChanged   Action = "bearer_changed"
@@ -105,6 +107,14 @@ func (l *Logger) Quarantine(remote, name string) {
 
 func (l *Logger) Release(remote, name string) {
 	l.record(ActionRelease, "file released from quarantine: "+name, map[string]any{"stored_name": name}, remote)
+}
+
+func (l *Logger) MarkPublic(remote, name string) {
+	l.record(ActionMarkPublic, "file marked public: "+name, map[string]any{"stored_name": name}, remote)
+}
+
+func (l *Logger) MarkPrivate(remote, name string) {
+	l.record(ActionMarkPrivate, "file made private: "+name, map[string]any{"stored_name": name}, remote)
 }
 
 func (l *Logger) SettingsChanged(remote string, fields []string) {

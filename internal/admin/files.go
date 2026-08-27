@@ -24,6 +24,7 @@ type fileInfo struct {
 	Quarantined bool      `json:"quarantined"`
 	UploaderIP  string    `json:"uploader_ip"`
 	Readable    bool      `json:"readable"`
+	Public      bool      `json:"public"`
 }
 
 // DiskUsage reports storage consumed by the upload directory plus the
@@ -76,6 +77,7 @@ func (h *Handler) ListFiles(w http.ResponseWriter, r *http.Request) {
 			Quarantined: strings.HasSuffix(e.Name(), ".quarantined"),
 			UploaderIP:  ip,
 			Readable:    readable,
+			Public:      db.IsPublic(h.conn, e.Name()),
 		})
 	}
 
@@ -217,6 +219,9 @@ func (h *Handler) Quarantine(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = db.SetUploadQuarantined(h.conn, name, true)
+	if db.IsPublic(h.conn, name) {
+		_ = db.MarkPrivate(h.conn, name)
+	}
 	h.auditLog.Quarantine(logging.ClientIP(r), name)
 
 	web.JSON(w, http.StatusOK, web.ErrorResponse{
@@ -287,6 +292,114 @@ func (h *Handler) Release(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
+}
+
+// MarkPublic registers a stored file for anonymous access via /pub.
+func (h *Handler) MarkPublic(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("name")
+	path, ok := h.storedPath(name)
+	if !ok {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "invalid file name",
+		})
+		return
+	}
+	if !h.fileExists(path) {
+		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
+			Status:  "error",
+			Message: "file not found",
+		})
+		return
+	}
+	if strings.HasSuffix(name, ".quarantined") {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "quarantined files cannot be shared publicly",
+		})
+		return
+	}
+
+	if err := db.MarkPublic(h.conn, name); err != nil {
+		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
+			Status:  "error",
+			Message: "failed to mark file public",
+		})
+		return
+	}
+	h.auditLog.MarkPublic(logging.ClientIP(r), name)
+
+	web.JSON(w, http.StatusOK, web.ErrorResponse{Status: "ok", Message: "File is now public"})
+}
+
+// MarkPrivate revokes anonymous access for a stored file.
+func (h *Handler) MarkPrivate(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("name")
+	path, ok := h.storedPath(name)
+	if !ok {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "invalid file name",
+		})
+		return
+	}
+	if !h.fileExists(path) {
+		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
+			Status:  "error",
+			Message: "file not found",
+		})
+		return
+	}
+
+	if err := db.MarkPrivate(h.conn, name); err != nil {
+		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
+			Status:  "error",
+			Message: "failed to make file private",
+		})
+		return
+	}
+	h.auditLog.MarkPrivate(logging.ClientIP(r), name)
+
+	web.JSON(w, http.StatusOK, web.ErrorResponse{Status: "ok", Message: "File is now private"})
+}
+
+// PublicFile serves a publicly shared file without authentication. Files not
+// marked public (or quarantined) are indistinguishable from missing files.
+func (h *Handler) PublicFile(w http.ResponseWriter, r *http.Request) {
+	path, ok := h.storedPath(r.URL.Query().Get("name"))
+	if !ok {
+		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
+			Status:  "error",
+			Message: "file not available",
+		})
+		return
+	}
+	if !h.fileExists(path) {
+		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
+			Status:  "error",
+			Message: "file not available",
+		})
+		return
+	}
+
+	name := filepath.Base(path)
+	if strings.HasSuffix(name, ".quarantined") || !db.IsPublic(h.conn, name) {
+		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
+			Status:  "error",
+			Message: "file not available",
+		})
+		return
+	}
+
+	// Text files are served inline as text/plain for reading; everything else
+	// is an attachment download.
+	if text, _ := filetype.IsText(path); text {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", "inline; filename=\""+name+"\"")
+	} else {
+		w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
+	}
+	http.ServeFile(w, r, path)
 }
 
 // Delete removes a stored file.
