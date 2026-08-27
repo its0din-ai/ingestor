@@ -91,6 +91,7 @@ button{cursor:pointer;font:inherit;border:none;background:none;color:inherit}
 .table-scroll{overflow-x:auto;border:1px dashed var(--border);border-radius:var(--radius);background:var(--panel)}
 .table-scroll .files-table{width:100%;min-width:980px;border:none;border-radius:0}
 .table-scroll .files-table th,.table-scroll .files-table td{white-space:nowrap}
+.table-scroll .audit-table{min-width:900px}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem}
 .badge{display:inline-block;padding:.15rem .5rem;border-radius:20px;font-size:.72rem;font-weight:600}
 .badge-q{background:rgba(245,184,61,.15);color:var(--warn)}
@@ -317,10 +318,12 @@ textarea:focus{outline:none;border-color:var(--accent)}
       <div><h1>Audit Log</h1><div class="meta">All actions performed on this server</div></div>
       <button class="btn btn-ghost" onclick="loadAudit()">Refresh</button>
     </div>
-    <table class="files-table">
-      <thead><tr><th>Time</th><th>Action</th><th>Summary</th><th>Remote IP</th><th>User-Agent</th></tr></thead>
-      <tbody id="audit-body"></tbody>
-    </table>
+    <div class="table-scroll">
+      <table class="files-table audit-table">
+        <thead><tr><th>Time</th><th>Action</th><th>Summary</th><th>Remote IP</th><th>Client</th></tr></thead>
+        <tbody id="audit-body"></tbody>
+      </table>
+    </div>
     <div class="empty" id="audit-empty" style="display:none">No audit entries yet.</div>
     <div class="pager" id="audit-pager"></div>
   </div>
@@ -986,13 +989,16 @@ function renderAudit(entries) {
       '<td><span class="badge-action">' + esc(a.action) + '</span></td>' +
       '<td>' + esc(a.summary) + '</td>' +
       '<td>' + esc(a.remote_addr || '') + '</td>' +
-      '<td class="mono" style="font-size:.78rem">' + esc(a.user_agent || '') + '</td>';
+      '<td class="mono" style="font-size:.78rem">' + esc(a.ua_label || '') + '</td>';
     body.appendChild(tr);
-    if (a.detail) {
+    const detailParts = [];
+    if (a.user_agent) detailParts.push('User-Agent: ' + a.user_agent);
+    if (a.detail) detailParts.push(prettyDetail(a.detail));
+    if (detailParts.length) {
       const det = document.createElement('tr');
       det.className = 'audit-detail-row';
       det.style.display = 'none';
-      det.innerHTML = '<td colspan="5"><div class="audit-detail">' + esc(prettyDetail(a.detail)) + '</div></td>';
+      det.innerHTML = '<td colspan="5"><div class="audit-detail">' + esc(detailParts.join('\n\n')) + '</div></td>';
       body.appendChild(det);
     }
   }

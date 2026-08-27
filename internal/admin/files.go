@@ -531,6 +531,7 @@ func (h *Handler) ListAudit(w http.ResponseWriter, r *http.Request) {
 		Detail     string `json:"detail"`
 		RemoteAddr string `json:"remote_addr"`
 		UserAgent  string `json:"user_agent"`
+		UALabel    string `json:"ua_label"`
 		CreatedAt  string `json:"created_at"`
 	}
 
@@ -543,6 +544,7 @@ func (h *Handler) ListAudit(w http.ResponseWriter, r *http.Request) {
 			Detail:     a.Detail,
 			RemoteAddr: a.RemoteAddr,
 			UserAgent:  a.UserAgent,
+			UALabel:    uaLabel(a.UserAgent),
 			CreatedAt:  a.CreatedAt.Format(time.RFC3339),
 		})
 	}
