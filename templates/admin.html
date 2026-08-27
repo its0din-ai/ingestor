@@ -209,6 +209,10 @@ textarea:focus{outline:none;border-color:var(--accent)}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
       <span>Files</span>
     </a>
+    <a href="#" data-view="exfil">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg>
+      <span>Exfil</span>
+    </a>
     <a href="#" data-view="docs">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
       <span>Docs</span>
@@ -243,6 +247,13 @@ textarea:focus{outline:none;border-color:var(--accent)}
 </div>
 
 <div class="main">
+  <div class="bulk-bar" id="bulk-bar" style="display:none">
+    <span class="bulk-count" id="bulk-count">0 selected</span>
+    <button class="icon-btn" id="bulk-quarantine" onclick="bulkAction('quarantine')">Quarantine</button>
+    <button class="icon-btn" id="bulk-release" onclick="bulkAction('release')">Release</button>
+    <button class="icon-btn" style="color:var(--danger)" id="bulk-delete" onclick="bulkDelete()">Delete</button>
+    <button class="icon-btn" onclick="clearSelection()">Clear</button>
+  </div>
   <div id="view-files">
     <div class="topbar">
       <div>
@@ -266,20 +277,33 @@ textarea:focus{outline:none;border-color:var(--accent)}
       <input type="file" id="dz-input" multiple hidden>
       <div class="dz-queue" id="dz-queue"></div>
     </div>
-    <div class="bulk-bar" id="bulk-bar" style="display:none">
-      <span class="bulk-count" id="bulk-count">0 selected</span>
-      <button class="icon-btn" id="bulk-quarantine" onclick="bulkAction('quarantine')">Quarantine</button>
-      <button class="icon-btn" id="bulk-release" onclick="bulkAction('release')">Release</button>
-      <button class="icon-btn" style="color:var(--danger)" id="bulk-delete" onclick="bulkDelete()">Delete</button>
-      <button class="icon-btn" onclick="clearSelection()">Clear</button>
-    </div>
     <div class="table-scroll">
       <table class="files-table">
-        <thead><tr><th style="width:36px"><input type="checkbox" id="sel-all" onclick="toggleSelectAll(this)"></th><th>Name</th><th>Size</th><th>Modified</th><th>Status</th><th>Uploader IP</th><th></th></tr></thead>
+        <thead><tr><th style="width:36px"><input type="checkbox" id="sel-all" onclick="toggleSelectAll(this, 'files')"></th><th>Name</th><th>Size</th><th>Modified</th><th>Status</th><th>Uploader IP</th><th></th></tr></thead>
         <tbody id="files-body"></tbody>
       </table>
     </div>
-    <div class="empty" id="files-empty" style="display:none">No files yet. Upload via the API.</div>
+    <div class="empty" id="files-empty" style="display:none">No browser uploads yet. Use the dropzone above.</div>
+  </div>
+
+  <div id="view-exfil" style="display:none">
+    <div class="topbar">
+      <div><h1>Exfil</h1><div class="meta">Files uploaded via the API (bearer token)</div></div>
+      <button class="btn btn-ghost" onclick="loadFiles()">Refresh</button>
+    </div>
+    <div class="toolbar">
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input id="search-exfil" type="text" placeholder="Filter files…" oninput="renderExfil()">
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table class="files-table">
+        <thead><tr><th style="width:36px"><input type="checkbox" id="sel-all-exfil" onclick="toggleSelectAll(this, 'exfil')"></th><th>Name</th><th>Size</th><th>Modified</th><th>Status</th><th>Uploader IP</th><th></th></tr></thead>
+        <tbody id="exfil-body"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="exfil-empty" style="display:none">No API uploads yet. Upload via the <span class="mono">/upload</span> endpoint.</div>
   </div>
 
   <div id="view-settings" style="display:none">
@@ -381,7 +405,8 @@ textarea:focus{outline:none;border-color:var(--accent)}
 
       <h2>Web Features</h2>
       <ul>
-        <li><strong>Files</strong> — drag-and-drop uploads with progress, search, text previews, download, quarantine/release, public sharing, and delete, with per-file status and uploader IP. Shows a live disk-usage monitor (uploads / used / total, % free).</li>
+        <li><strong>Files</strong> — browser uploads (drag-and-drop with progress), search, text previews, download, quarantine/release, public sharing, and delete, with per-file status and uploader IP. Shows a live disk-usage monitor (uploads / used / total, % free).</li>
+        <li><strong>Exfil</strong> — the same file actions for files uploaded via the API (<code>/upload</code>), kept separate so browser uploads and token uploads are easy to tell apart.</li>
         <li><strong>Settings</strong> — hot-reload upload directory, max upload size, quarantine extensions, and admin password. Changing the admin password logs out all sessions.</li>
         <li><strong>Tokens</strong> — create, copy, and delete bearer upload tokens, each with an optional label and expiry. Omit the expiry for an indefinite token.</li>
         <li><strong>Audit</strong> — paginated log of every login, upload, read, download, quarantine/release, public-share access, settings change, and file action, with client IP and User-Agent, pruned after the configured retention (default 30 days).</li>
@@ -481,6 +506,7 @@ async function loadFiles() {
     const data = await res.json();
     allFiles = data.files || [];
     renderFiles();
+    renderExfil();
   } catch (e) {
     toast('Failed to load files', true);
   }
@@ -503,47 +529,62 @@ async function loadDisk() {
   }
 }
 
-function renderFiles() {
-  const q = document.getElementById('search').value.toLowerCase();
-  const rows = allFiles.filter(f => f.name.toLowerCase().includes(q));
-  const body = document.getElementById('files-body');
-  const empty = document.getElementById('files-empty');
+function visibleFiles(isApi) {
+  const input = isApi ? document.getElementById('search-exfil') : document.getElementById('search');
+  const q = input.value.toLowerCase();
+  return allFiles.filter(f => (f.source === 'api') === isApi && f.name.toLowerCase().includes(q));
+}
+
+function fileRowHTML(f) {
+  return '<td><input type="checkbox" class="file-cb" data-name="' + esc(f.name) + '"' + (selected.has(f.name) ? ' checked' : '') + ' onchange="onRowSelect()"></td>' +
+    '<td class="mono">' + esc(f.name) + '</td>' +
+    '<td>' + fmtSize(f.size) + '</td>' +
+    '<td>' + fmtTime(f.modified) + '</td>' +
+    '<td>' + (f.quarantined ? '<span class="badge badge-q">quarantined</span>' : (f.public ? '<span class="badge badge-public">public</span>' : '<span class="badge badge-ok">ok</span>')) + '</td>' +
+    '<td>' + esc(f.uploader_ip || '') + '</td>' +
+    '<td><div class="row-actions">' +
+      (f.quarantined
+        ? ''
+        : (f.public
+            ? '<button class="icon-btn" onclick="copyPublicLink(this)" data-name="' + esc(f.name) + '" title="Copy public link">link</button>' +
+              '<button class="icon-btn" onclick="setPublic(this)" data-action="private" data-name="' + esc(f.name) + '">unshare</button>'
+            : '<button class="icon-btn" onclick="setPublic(this)" data-action="public" data-name="' + esc(f.name) + '">share</button>')) +
+      (f.quarantined
+        ? '<button class="icon-btn" onclick="setQuarantine(this)" data-action="release" data-name="' + esc(f.name) + '">release</button>'
+        : '<button class="icon-btn" onclick="setQuarantine(this)" data-action="quarantine" data-name="' + esc(f.name) + '">quarantine</button>') +
+      (f.readable ? '<button class="icon-btn" onclick="readFile(this)" data-name="' + esc(f.name) + '">read</button>' : '') +
+      '<a class="icon-btn" href="/dashboard/download?name=' + encodeURIComponent(f.name) + '">download</a>' +
+      '<button class="icon-btn" onclick="delFile(this)" data-name="' + esc(f.name) + '" style="color:var(--danger)">delete</button>' +
+    '</div></td>';
+}
+
+function renderTable(bodyId, emptyId, rows) {
+  const body = document.getElementById(bodyId);
+  const empty = document.getElementById(emptyId);
   body.innerHTML = '';
   empty.style.display = rows.length ? 'none' : 'block';
   for (const f of rows) {
     const tr = document.createElement('tr');
-    tr.innerHTML =
-      '<td><input type="checkbox" class="file-cb" data-name="' + esc(f.name) + '"' + (selected.has(f.name) ? ' checked' : '') + ' onchange="onRowSelect()"></td>' +
-      '<td class="mono">' + esc(f.name) + '</td>' +
-      '<td>' + fmtSize(f.size) + '</td>' +
-      '<td>' + fmtTime(f.modified) + '</td>' +
-      '<td>' + (f.quarantined ? '<span class="badge badge-q">quarantined</span>' : (f.public ? '<span class="badge badge-public">public</span>' : '<span class="badge badge-ok">ok</span>')) + '</td>' +
-      '<td>' + esc(f.uploader_ip || '') + '</td>' +
-      '<td><div class="row-actions">' +
-        (f.quarantined
-          ? ''
-          : (f.public
-              ? '<button class="icon-btn" onclick="copyPublicLink(this)" data-name="' + esc(f.name) + '" title="Copy public link">link</button>' +
-                '<button class="icon-btn" onclick="setPublic(this)" data-action="private" data-name="' + esc(f.name) + '">unshare</button>'
-              : '<button class="icon-btn" onclick="setPublic(this)" data-action="public" data-name="' + esc(f.name) + '">share</button>')) +
-        (f.quarantined
-          ? '<button class="icon-btn" onclick="setQuarantine(this)" data-action="release" data-name="' + esc(f.name) + '">release</button>'
-          : '<button class="icon-btn" onclick="setQuarantine(this)" data-action="quarantine" data-name="' + esc(f.name) + '">quarantine</button>') +
-        (f.readable ? '<button class="icon-btn" onclick="readFile(this)" data-name="' + esc(f.name) + '">read</button>' : '') +
-        '<a class="icon-btn" href="/dashboard/download?name=' + encodeURIComponent(f.name) + '">download</a>' +
-        '<button class="icon-btn" onclick="delFile(this)" data-name="' + esc(f.name) + '" style="color:var(--danger)">delete</button>' +
-      '</div></td>';
+    tr.innerHTML = fileRowHTML(f);
     body.appendChild(tr);
   }
   collectSelection();
   updateBulkBar();
 }
 
+function renderFiles() {
+  renderTable('files-body', 'files-empty', visibleFiles(false));
+}
+
+function renderExfil() {
+  renderTable('exfil-body', 'exfil-empty', visibleFiles(true));
+}
+
 let selected = new Set();
 
 function collectSelection() {
   selected.clear();
-  document.querySelectorAll('#files-body .file-cb:checked').forEach(cb => selected.add(cb.dataset.name));
+  document.querySelectorAll('#files-body .file-cb:checked, #exfil-body .file-cb:checked').forEach(cb => selected.add(cb.dataset.name));
 }
 
 function onRowSelect() {
@@ -561,16 +602,18 @@ function updateBulkBar() {
   document.getElementById('bulk-release').disabled = !sel.some(f => f.quarantined);
 }
 
-function toggleSelectAll(cb) {
-  document.querySelectorAll('#files-body .file-cb').forEach(ck => { ck.checked = cb.checked; });
+function toggleSelectAll(cb, view) {
+  const tbody = view === 'exfil' ? '#exfil-body' : '#files-body';
+  document.querySelectorAll(tbody + ' .file-cb').forEach(ck => { ck.checked = cb.checked; });
   collectSelection();
   updateBulkBar();
 }
 
 function clearSelection() {
   selected.clear();
-  document.querySelectorAll('#files-body .file-cb').forEach(cb => { cb.checked = false; });
+  document.querySelectorAll('#files-body .file-cb, #exfil-body .file-cb').forEach(cb => { cb.checked = false; });
   document.getElementById('sel-all').checked = false;
+  document.getElementById('sel-all-exfil').checked = false;
   updateBulkBar();
 }
 
@@ -946,12 +989,14 @@ async function saveSettings() {
 function switchView(view) {
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === view));
   document.getElementById('view-files').style.display = view === 'files' ? '' : 'none';
+  document.getElementById('view-exfil').style.display = view === 'exfil' ? '' : 'none';
   document.getElementById('view-settings').style.display = view === 'settings' ? '' : 'none';
   document.getElementById('view-audit').style.display = view === 'audit' ? '' : 'none';
   document.getElementById('view-tokens').style.display = view === 'tokens' ? '' : 'none';
   document.getElementById('view-docs').style.display = view === 'docs' ? '' : 'none';
   if (view === 'settings') loadSettings();
   if (view === 'files') loadFiles();
+  if (view === 'exfil') loadFiles();
   if (view === 'audit') loadAudit(1);
   if (view === 'tokens') loadTokens();
 }

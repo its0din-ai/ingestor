@@ -77,7 +77,46 @@ func migrate(conn *sql.DB) error {
 	if err := migrateStoredName(conn); err != nil {
 		return err
 	}
-	return migrateAuditUserAgent(conn)
+	if err := migrateAuditUserAgent(conn); err != nil {
+		return err
+	}
+	return migrateUploadSource(conn)
+}
+
+// columnExists reports whether table has column.
+func columnExists(conn *sql.DB, table, column string) (bool, error) {
+	rows, err := conn.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, pk int
+		var def sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &def, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+// migrateUploadSource adds the source column to upload_history if missing.
+func migrateUploadSource(conn *sql.DB) error {
+	exists, err := columnExists(conn, "upload_history", "source")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	_, err = conn.Exec(`ALTER TABLE upload_history ADD COLUMN source TEXT NOT NULL DEFAULT ''`)
+	return err
 }
 
 // migrateAuditUserAgent adds the user_agent column to audit_log if missing.
@@ -202,13 +241,14 @@ type UploadRecord struct {
 	FileSize     int64
 	Quarantined  bool
 	RemoteAddr   string
+	Source       string
 	CreatedAt    time.Time
 }
 
 func InsertUpload(conn *sql.DB, r UploadRecord) error {
 	_, err := conn.Exec(
-		`INSERT INTO upload_history (original_name, stored_name, file_size, quarantined, remote_addr, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		r.OriginalName, r.StoredName, r.FileSize, r.Quarantined, r.RemoteAddr, r.CreatedAt,
+		`INSERT INTO upload_history (original_name, stored_name, file_size, quarantined, remote_addr, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		r.OriginalName, r.StoredName, r.FileSize, r.Quarantined, r.RemoteAddr, r.Source, r.CreatedAt,
 	)
 	return err
 }
@@ -225,6 +265,20 @@ func UploaderIP(conn *sql.DB, storedName string) (string, error) {
 		return "", nil
 	}
 	return ip, err
+}
+
+// UploadSource returns the source ("api" or "browser") of the stored file, or
+// "" if no matching record exists.
+func UploadSource(conn *sql.DB, storedName string) (string, error) {
+	var src string
+	err := conn.QueryRow(
+		`SELECT source FROM upload_history WHERE stored_name = ? ORDER BY id DESC LIMIT 1`,
+		storedName,
+	).Scan(&src)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return src, err
 }
 
 // SetUploadQuarantined updates the quarantine flag of the stored file name.

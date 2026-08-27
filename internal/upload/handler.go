@@ -86,7 +86,7 @@ func (h *Handler) handleMultipart(w http.ResponseWriter, r *http.Request, maxByt
 		if part.FileName() == "" {
 			continue
 		}
-		h.save(w, r, part, sanitizeName(part.FileName()), maxBytes, false)
+		h.save(w, r, part, sanitizeName(part.FileName()), maxBytes, false, "api")
 		_ = part.Close()
 		return
 	}
@@ -99,7 +99,7 @@ func (h *Handler) handleRaw(w http.ResponseWriter, r *http.Request, maxBytes int
 	if name == "" {
 		name = "upload-" + strconv.FormatInt(time.Now().Unix(), 10)
 	}
-	h.save(w, r, r.Body, name, maxBytes, false)
+	h.save(w, r, r.Body, name, maxBytes, false, "api")
 }
 
 // UploadBrowser stores a multipart file using its original name (no random
@@ -128,7 +128,7 @@ func (h *Handler) UploadBrowser(w http.ResponseWriter, r *http.Request) {
 		if part.FileName() == "" {
 			continue
 		}
-		h.save(w, r, part, sanitizeName(part.FileName()), maxBytes, true)
+		h.save(w, r, part, sanitizeName(part.FileName()), maxBytes, true, "browser")
 		_ = part.Close()
 		return
 	}
@@ -152,7 +152,9 @@ func rawFilename(r *http.Request) string {
 // save streams src into the upload dir as name. When keepName is true the
 // name is used verbatim (refusing to overwrite an existing file); otherwise
 // a random suffix is appended so concurrent arbitrary uploads never collide.
-func (h *Handler) save(w http.ResponseWriter, r *http.Request, src io.Reader, name string, maxBytes int64, keepName bool) {
+// source records how the file arrived ("api" for the token endpoint,
+// "browser" for the dashboard upload) so the Files view can be split.
+func (h *Handler) save(w http.ResponseWriter, r *http.Request, src io.Reader, name string, maxBytes int64, keepName bool, source string) {
 	dir := h.cfg.UploadDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		h.fail(w, http.StatusInternalServerError, "failed to prepare upload directory")
@@ -236,6 +238,7 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request, src io.Reader, na
 		FileSize:     written,
 		Quarantined:  quarantined,
 		RemoteAddr:   logging.ClientIP(r),
+		Source:       source,
 		CreatedAt:    time.Now(),
 	}); err != nil {
 		slog.Warn("failed to record upload", "err", err)

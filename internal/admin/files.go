@@ -24,6 +24,7 @@ type fileInfo struct {
 	UploaderIP  string    `json:"uploader_ip"`
 	Readable    bool      `json:"readable"`
 	Public      bool      `json:"public"`
+	Source      string    `json:"source"`
 }
 
 // DiskUsage reports storage consumed by the upload directory plus the
@@ -74,6 +75,12 @@ func (h *Handler) ListFiles(w http.ResponseWriter, r *http.Request) {
 		}
 		ip, _ := db.UploaderIP(h.conn, e.Name())
 		readable, _ := filetype.IsText(filepath.Join(dir, e.Name()))
+		src, _ := db.UploadSource(h.conn, e.Name())
+		if src == "" {
+			// No record (e.g. a file placed directly on disk): treat it as a
+			// browser/manual upload shown in the Files view.
+			src = "browser"
+		}
 		files = append(files, fileInfo{
 			Name:        e.Name(),
 			Size:        info.Size(),
@@ -82,6 +89,7 @@ func (h *Handler) ListFiles(w http.ResponseWriter, r *http.Request) {
 			UploaderIP:  ip,
 			Readable:    readable,
 			Public:      db.IsPublic(h.conn, e.Name()),
+			Source:      src,
 		})
 	}
 
