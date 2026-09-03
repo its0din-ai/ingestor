@@ -116,9 +116,14 @@ func main() {
 
 	addr := cfg.Addr()
 	writeTimeout := cfg.WriteTimeout()
+	// trust_proxy_headers gates whether proxy-supplied headers (CF-Connecting-
+	// IP, X-Real-IP, X-Forwarded-For/Proto/Host) are honored for client-IP and
+	// base-URL derivation. Enable when ingestor is only reachable through a
+	// trusted reverse proxy such as nginx, Cloudflare, or a FlareProx worker.
+	handler := logging.ProxyHeaders(cfg.TrustProxyHeaders(), logging.Middleware(mux))
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           logging.Middleware(mux),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       90 * time.Second,
 		WriteTimeout:      writeTimeout,

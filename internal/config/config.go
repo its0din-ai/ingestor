@@ -304,6 +304,16 @@ func (c *Config) CookieSecure() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv("cookie_secure")), "true")
 }
 
+// TrustProxyHeaders indicates whether client-IP and public base-URL headers
+// from an upstream proxy (CF-Connecting-IP, X-Real-IP, X-Forwarded-For/Proto/
+// Host) may be trusted. Enable when the app is only reachable through a
+// trusted reverse proxy such as Cloudflare or FlareProx; keep it off when
+// clients can connect directly, otherwise they could spoof their IP in the
+// audit log or bypass the per-IP login rate limiter.
+func (c *Config) TrustProxyHeaders() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("trust_proxy_headers")), "true")
+}
+
 // UploadDir returns the resolved upload directory as an absolute path. It is
 // always constrained to live inside the project root: an admin-supplied value
 // like /etc resolves to <root>/etc, never to the OS root.

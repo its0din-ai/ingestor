@@ -252,21 +252,25 @@ func (h *Handler) render(w http.ResponseWriter, r *http.Request, view string, cs
 }
 
 // baseURL derives the public base URL from the request as the browser sees
-// it. Behind a reverse proxy the X-Forwarded-Proto / X-Forwarded-Host
-// headers carry the external scheme and host, and the request's own Host is
-// used otherwise. The configured listen address (cfg.Addr) is intentionally
-// never used here: it is internal (e.g. 127.0.0.1:8081) and differs from the
+// it. When the request is marked as arriving through a trusted reverse proxy
+// (see logging.ProxyHeaders), X-Forwarded-Proto / X-Forwarded-Host carry the
+// external scheme and host. Otherwise the request's own Host and TLS state are
+// used. The configured listen address (cfg.Addr) is intentionally never used
+// here: it is internal (e.g. 127.0.0.1:8081) and differs from the
 // browser-facing URL.
 func baseURL(r *http.Request) string {
 	scheme := "http"
-	if p := firstHeader(r, "X-Forwarded-Proto"); p != "" {
-		scheme = p
-	} else if r.TLS != nil {
+	if r.TLS != nil {
 		scheme = "https"
 	}
 	host := r.Host
-	if h := firstHeader(r, "X-Forwarded-Host"); h != "" {
-		host = h
+	if logging.TrustedProxy(r) {
+		if p := firstHeader(r, "X-Forwarded-Proto"); p != "" {
+			scheme = p
+		}
+		if h := firstHeader(r, "X-Forwarded-Host"); h != "" {
+			host = h
+		}
 	}
 	return scheme + "://" + host
 }

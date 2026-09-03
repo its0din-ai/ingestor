@@ -168,6 +168,25 @@ func TestUploadDirStaysInRoot(t *testing.T) {
 	}
 }
 
+func TestTrustProxyHeaders(t *testing.T) {
+	t.Setenv("trust_proxy_headers", "")
+	if (&Config{}).TrustProxyHeaders() {
+		t.Fatal("empty env should default to false")
+	}
+	t.Setenv("trust_proxy_headers", "true")
+	if !(&Config{}).TrustProxyHeaders() {
+		t.Fatal("expected trust_proxy_headers=true to be honored")
+	}
+	t.Setenv("trust_proxy_headers", "TRUE")
+	if !(&Config{}).TrustProxyHeaders() {
+		t.Fatal("expected case-insensitive true to be honored")
+	}
+	t.Setenv("trust_proxy_headers", "false")
+	if (&Config{}).TrustProxyHeaders() {
+		t.Fatal("expected trust_proxy_headers=false to be rejected")
+	}
+}
+
 func TestDurationEnv(t *testing.T) {
 	if got := durationEnv("session_ttl", 24*time.Hour); got != 24*time.Hour {
 		t.Fatalf("missing env should fall back, got %v", got)

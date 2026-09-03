@@ -409,9 +409,12 @@ textarea:focus{outline:none;border-color:var(--accent)}
         <li><strong>Exfil</strong> — the same file actions for files uploaded via the API (<code>/upload</code>), kept separate so browser uploads and token uploads are easy to tell apart.</li>
         <li><strong>Settings</strong> — hot-reload upload directory, max upload size, quarantine extensions, and admin password. Changing the admin password logs out all sessions.</li>
         <li><strong>Tokens</strong> — create, copy, and delete bearer upload tokens, each with an optional label and expiry. Omit the expiry for an indefinite token.</li>
-        <li><strong>Audit</strong> — paginated log of every login, upload, read, download, quarantine/release, public-share access, settings change, and file action, with client IP and User-Agent, pruned after the configured retention (default 30 days).</li>
+        <li><strong>Audit</strong> — paginated log of every login, upload, read, download, quarantine/release, public-share access, settings change, and file action, with client IP and User-Agent, pruned after the configured retention (default 30 days). Click a remote IP to open its <code>ipinfo.io</code> lookup in a new tab.</li>
         <li><strong>Dark / light theme</strong> and a collapsible sidebar — toggled from the sidebar, persisted in your browser.</li>
       </ul>
+
+      <h2>Reverse Proxy (nginx / Cloudflare / FlareProx)</h2>
+      <p>ingestor can sit behind any reverse proxy that forwards the original client IP — nginx, Cloudflare, or a <a href="https://github.com/MrTurvey/flareprox" target="_blank" rel="noopener noreferrer">FlareProx</a> Cloudflare Worker pass-through. When it does, set <code>trust_proxy_headers=true</code> in <code>.env</code> (and <code>cookie_secure=true</code> if the proxy terminates TLS) so the audit log records the real client IP and generated links use the external scheme/host. Keep it off when clients can reach the listener directly, otherwise a client can spoof its logged IP with a forged <code>X-Forwarded-For</code> header.</p>
 
       <h2>Health</h2>
       <pre><code>curl {{.BaseURL}}/healthz</code></pre>
@@ -1034,7 +1037,7 @@ function renderAudit(entries) {
       '<td>' + fmtTime(a.created_at) + '</td>' +
       '<td><span class="badge-action">' + esc(a.action) + '</span></td>' +
       '<td>' + esc(a.summary) + '</td>' +
-      '<td>' + esc(a.remote_addr || '') + '</td>' +
+      '<td>' + ipLookupHTML(a.remote_addr) + '</td>' +
       '<td class="mono" style="font-size:.78rem">' + esc(a.ua_label || '') + '</td>';
     body.appendChild(tr);
     const detailParts = [];
@@ -1048,6 +1051,12 @@ function renderAudit(entries) {
       body.appendChild(det);
     }
   }
+}
+
+function ipLookupHTML(ip) {
+  if (!ip) return '';
+  const href = 'https://ipinfo.io/' + encodeURIComponent(ip);
+  return '<a href="' + href + '" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" title="Look up IP on ipinfo.io">' + esc(ip) + ' <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg></a>';
 }
 
 function toggleAuditDetail(row, a) {
