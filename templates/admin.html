@@ -471,6 +471,22 @@ textarea:focus{outline:none;border-color:var(--accent)}
     </div>
   </div>
 </div>
+
+<div class="modal-overlay" id="confirm-modal">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <h3 id="confirm-title">Confirm</h3>
+      <button class="modal-close" onclick="confirmDialog(false)">Close</button>
+    </div>
+    <div class="modal-body">
+      <p id="confirm-message" style="font-size:.9rem;line-height:1.55;word-break:break-word;color:var(--text)"></p>
+      <div class="row-actions" style="margin-top:1.1rem">
+        <button class="btn btn-ghost" onclick="confirmDialog(false)">Cancel</button>
+        <button class="btn btn-danger" id="confirm-ok" onclick="confirmDialog(true)">Confirm</button>
+      </div>
+    </div>
+  </div>
+</div>
 {{end}}
 
 {{if ne .View "login"}}
@@ -626,7 +642,6 @@ async function bulkAction(action) {
     .map(f => f.name);
   if (!names.length) { toast('Nothing to ' + action, true); return; }
   const verb = action === 'quarantine' ? 'Quarantine' : 'Release';
-  if (!confirm(verb + ' ' + names.length + ' file(s)?')) return;
   let ok = 0;
   for (const name of names) {
     try {
@@ -646,8 +661,12 @@ async function bulkAction(action) {
 async function bulkDelete() {
   const names = allFiles.filter(f => selected.has(f.name)).map(f => f.name);
   if (!names.length) return;
-  if (!confirm('Delete ' + names.length + ' item(s)?')) return;
-  let ok = 0;
+  const ok = await askConfirm('Delete ' + names.length + ' item(s)?', {
+    title: 'Delete files',
+    okText: 'Delete'
+  });
+  if (!ok) return;
+  let done = 0;
   for (const name of names) {
     try {
       const res = await fetch('/dashboard/delete', {
@@ -655,17 +674,21 @@ async function bulkDelete() {
         headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': csrf},
         body: 'name=' + encodeURIComponent(name)
       });
-      if (res.ok) ok++;
+      if (res.ok) done++;
     } catch (e) {}
   }
-  toast('Deleted ' + ok + ' file(s)');
+  toast('Deleted ' + done + ' file(s)');
   clearSelection();
   loadFiles();
 }
 
 async function delFile(btn) {
   const name = btn.dataset.name;
-  if (!confirm('Delete ' + name + '?')) return;
+  const ok = await askConfirm('Delete ' + name + '?', {
+    title: 'Delete file',
+    okText: 'Delete'
+  });
+  if (!ok) return;
   try {
     const res = await fetch('/dashboard/delete', {
       method: 'POST',
@@ -711,7 +734,35 @@ function closeReader() {
 document.getElementById('read-modal').addEventListener('click', e => {
   if (e.target === e.currentTarget) closeReader();
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeReader(); });
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  closeReader();
+  confirmDialog(false);
+});
+
+let confirmCb = null;
+
+function confirmDialog(ok) {
+  const cb = confirmCb;
+  confirmCb = null;
+  document.getElementById('confirm-modal').classList.remove('open');
+  if (cb) cb(ok);
+}
+
+function askConfirm(message, opts) {
+  opts = opts || {};
+  document.getElementById('confirm-title').textContent = opts.title || 'Confirm';
+  document.getElementById('confirm-message').textContent = message;
+  document.getElementById('confirm-ok').textContent = opts.okText || 'Confirm';
+  return new Promise(resolve => {
+    confirmCb = resolve;
+    document.getElementById('confirm-modal').classList.add('open');
+  });
+}
+
+document.getElementById('confirm-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) confirmDialog(false);
+});
 
 let uploadQueue = [];
 let uploading = false;
@@ -813,7 +864,6 @@ async function setQuarantine(btn) {
   const name = btn.dataset.name;
   const action = btn.dataset.action;
   const verb = action === 'quarantine' ? 'Quarantine' : 'Release';
-  if (!confirm(verb + ' ' + name + '?')) return;
   try {
     const res = await fetch('/dashboard/' + action, {
       method: 'POST',
@@ -831,7 +881,6 @@ async function setPublic(btn) {
   const name = btn.dataset.name;
   const action = btn.dataset.action;
   const verb = action === 'public' ? 'share' : 'unshare';
-  if (!confirm((verb === 'share' ? 'Share' : 'Unshare') + ' ' + name + '?')) return;
   try {
     const res = await fetch('/dashboard/' + action, {
       method: 'POST',
@@ -933,7 +982,11 @@ async function createToken() {
 
 async function delToken(btn) {
   const id = btn.dataset.tokenId;
-  if (!confirm('Delete token ' + id + '?')) return;
+  const ok = await askConfirm('Delete token ' + id + '?', {
+    title: 'Delete token',
+    okText: 'Delete'
+  });
+  if (!ok) return;
   try {
     const res = await fetch('/dashboard/api/tokens/delete', {
       method: 'POST',
