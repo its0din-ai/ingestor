@@ -87,6 +87,12 @@ func ClientIP(r *http.Request) string {
 	return host
 }
 
+// ViaMorphProxy reports whether the request came through the CF proxy, as
+// indicated by the presence of the X-Morph-Real-Ip header it sets.
+func ViaMorphProxy(r *http.Request) bool {
+	return r != nil && forwardedIP(r.Header.Get("X-Morph-Real-Ip")) != ""
+}
+
 // forwardedIP trims a proxy header value and returns its leftmost, non-empty
 // token (the header may carry a comma-separated chain).
 func forwardedIP(value string) string {

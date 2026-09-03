@@ -42,7 +42,9 @@ func New(conn *sql.DB) *Logger {
 }
 
 // record stores an audit entry. The client IP and User-Agent are derived from
-// the request so every entry carries consistent attribution.
+// the request so every entry carries consistent attribution. Actions received
+// via the CF proxy (identified by its X-Morph-Real-Ip header) are marked in
+// the summary so proxied traffic is easy to spot.
 func (l *Logger) record(action Action, summary string, detail map[string]any, r *http.Request) {
 	d := ""
 	if detail != nil {
@@ -54,6 +56,9 @@ func (l *Logger) record(action Action, summary string, detail map[string]any, r 
 	if r != nil {
 		remote = logging.ClientIP(r)
 		ua = r.UserAgent()
+		if logging.ViaMorphProxy(r) {
+			summary += " via cf-proxy"
+		}
 	}
 	_ = db.InsertAudit(l.conn, db.AuditRecord{
 		Action:     string(action),
