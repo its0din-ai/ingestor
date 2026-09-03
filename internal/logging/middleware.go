@@ -48,8 +48,8 @@ const trustProxyKey ctxKey = 0
 
 // ProxyHeaders wraps next and marks the request as arriving through a trusted
 // reverse proxy when trust is true (e.g. nginx, Cloudflare, or a FlareProx
-// Cloudflare Worker). ClientIP and base-URL derivation then honor the standard
-// proxy headers (CF-Connecting-IP, X-Real-IP, X-Forwarded-For/Proto/Host).
+// Cloudflare Worker). ClientIP and base-URL derivation then honor the proxy
+// headers (X-Morph-Real-Ip, CF-Connecting-IP, X-Forwarded-For/Proto/Host).
 // When trust is false the socket peer address and request Host are
 // authoritative, so an untrusted client cannot spoof its own IP.
 func ProxyHeaders(trust bool, next http.Handler) http.Handler {
@@ -69,12 +69,12 @@ func TrustedProxy(r *http.Request) bool {
 }
 
 // ClientIP returns the originating client IP. Behind a trusted reverse proxy
-// (see ProxyHeaders) it honors, in order: CF-Connecting-IP (Cloudflare),
-// X-Real-IP, then the leftmost X-Forwarded-For entry. Otherwise the socket
+// (see ProxyHeaders) it honors, in order: X-Morph-Real-Ip, CF-Connecting-IP
+// (Cloudflare), then the leftmost X-Forwarded-For entry. Otherwise the socket
 // peer address is returned.
 func ClientIP(r *http.Request) string {
 	if TrustedProxy(r) {
-		for _, name := range []string{"CF-Connecting-IP", "X-Real-IP", "X-Forwarded-For"} {
+		for _, name := range []string{"X-Morph-Real-Ip", "CF-Connecting-IP", "X-Forwarded-For"} {
 			if ip := forwardedIP(r.Header.Get(name)); ip != "" {
 				return ip
 			}

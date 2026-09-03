@@ -414,7 +414,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
       </ul>
 
       <h2>Reverse Proxy (nginx / Cloudflare / FlareProx)</h2>
-      <p>ingestor can sit behind any reverse proxy that forwards the original client IP — nginx, Cloudflare, or a <a href="https://github.com/MrTurvey/flareprox" target="_blank" rel="noopener noreferrer">FlareProx</a> Cloudflare Worker pass-through. When it does, set <code>trust_proxy_headers=true</code> in <code>.env</code> (and <code>cookie_secure=true</code> if the proxy terminates TLS) so the audit log records the real client IP and generated links use the external scheme/host. Keep it off when clients can reach the listener directly, otherwise a client can spoof its logged IP with a forged <code>X-Forwarded-For</code> header.</p>
+      <p>ingestor can sit behind any reverse proxy that forwards the original client IP — nginx, Cloudflare, or a <a href="https://github.com/MrTurvey/flareprox" target="_blank" rel="noopener noreferrer">FlareProx</a> Cloudflare Worker pass-through. When it does, set <code>trust_proxy_headers=true</code> in <code>.env</code> (and <code>cookie_secure=true</code> if the proxy terminates TLS) so the audit log records the real client IP and generated links use the external scheme/host. The real client IP is resolved in priority order: <code>X-Morph-Real-Ip</code>, then <code>CF-Connecting-IP</code> (Cloudflare), then <code>X-Forwarded-For</code>. Keep the setting off when clients can reach the listener directly, otherwise a client can spoof its logged IP with a forged proxy header.</p>
 
       <h2>Health</h2>
       <pre><code>curl {{.BaseURL}}/healthz</code></pre>

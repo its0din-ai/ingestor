@@ -48,6 +48,39 @@ func TestClientIPTrustedCloudflare(t *testing.T) {
 	ProxyHeaders(true, next).ServeHTTP(rr, req)
 }
 
+func TestClientIPXRealIPIgnored(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "203.0.113.9:5555"
+	req.Header.Set("X-Real-IP", "192.0.2.1")
+	req.Header.Set("X-Forwarded-For", "198.51.100.7")
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := ClientIP(r); got != "198.51.100.7" {
+			t.Fatalf("trusted ClientIP = %q, want X-Forwarded-For 198.51.100.7 (X-Real-IP is not trusted)", got)
+		}
+	})
+
+	rr := httptest.NewRecorder()
+	ProxyHeaders(true, next).ServeHTTP(rr, req)
+}
+
+func TestClientIPMorphRealIPPriority(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "203.0.113.9:5555"
+	req.Header.Set("X-Morph-Real-Ip", "198.51.100.44")
+	req.Header.Set("CF-Connecting-IP", "192.0.2.1")
+	req.Header.Set("X-Forwarded-For", "198.51.100.7")
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := ClientIP(r); got != "198.51.100.44" {
+			t.Fatalf("trusted ClientIP = %q, want X-Morph-Real-Ip 198.51.100.44", got)
+		}
+	})
+
+	rr := httptest.NewRecorder()
+	ProxyHeaders(true, next).ServeHTTP(rr, req)
+}
+
 func TestClientIPMissingPort(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "2001:db8::1"

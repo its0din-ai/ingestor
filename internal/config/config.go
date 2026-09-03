@@ -305,11 +305,11 @@ func (c *Config) CookieSecure() bool {
 }
 
 // TrustProxyHeaders indicates whether client-IP and public base-URL headers
-// from an upstream proxy (CF-Connecting-IP, X-Real-IP, X-Forwarded-For/Proto/
-// Host) may be trusted. Enable when the app is only reachable through a
-// trusted reverse proxy such as Cloudflare or FlareProx; keep it off when
-// clients can connect directly, otherwise they could spoof their IP in the
-// audit log or bypass the per-IP login rate limiter.
+// from an upstream proxy (X-Morph-Real-Ip, CF-Connecting-IP,
+// X-Forwarded-For/Proto/Host) may be trusted. Enable when the app is only
+// reachable through a trusted reverse proxy such as Cloudflare or FlareProx;
+// keep it off when clients can connect directly, otherwise they could spoof
+// their IP in the audit log or bypass the per-IP login rate limiter.
 func (c *Config) TrustProxyHeaders() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv("trust_proxy_headers")), "true")
 }
