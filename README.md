@@ -18,8 +18,8 @@ The dependency versions are pinned to releases that still support Go 1.22:
 - `golang.org/x/crypto` `v0.31.0`
 - `modernc.org/sqlite` `v1.34.4`
 
-Newer releases of `golang.org/x/crypto` (and the `modernc.org` stack) require Go 1.23+
-and will not build with `GOTOOLCHAIN=local` on this toolchain.
+Newer releases of `golang.org/x/crypto` (and the `modernc.org` stack) require a newer
+Go toolchain and will not build with `GOTOOLCHAIN=local` on this version.
 
 ### Test build
 
