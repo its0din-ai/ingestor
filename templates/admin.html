@@ -519,6 +519,34 @@ function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// copyText copies text to the clipboard. The async Clipboard API only exists
+// in secure contexts (HTTPS or localhost), so fall back to a hidden textarea
+// and execCommand('copy') when the app is served over plain HTTP.
+function copyText(text, okMsg) {
+  const done = () => { if (okMsg) toast(okMsg); };
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text).then(done, () => legacyCopy(text, done));
+  }
+  return legacyCopy(text, done);
+}
+
+function legacyCopy(text, done) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.top = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  ta.setSelectionRange(0, ta.value.length);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  document.body.removeChild(ta);
+  if (ok) { done(); return Promise.resolve(); }
+  toast('Copy failed — select and copy manually', true);
+  return Promise.reject(new Error('copy failed'));
+}
+
 async function loadFiles() {
   try {
     const res = await fetch('/dashboard/api/files');
@@ -891,7 +919,7 @@ async function setPublic(btn) {
       toast('File ' + verb + 'd');
       if (action === 'public') {
         const url = baseURL + '/pub?name=' + encodeURIComponent(name);
-        navigator.clipboard.writeText(url).then(() => toast('Shared. Public link copied'));
+        copyText(url, 'Shared. Public link copied');
       }
       loadFiles();
     } else {
@@ -906,7 +934,7 @@ async function setPublic(btn) {
 
 function copyPublicLink(btn) {
   const url = baseURL + '/pub?name=' + encodeURIComponent(btn.dataset.name);
-  navigator.clipboard.writeText(url).then(() => toast('Public link copied'));
+  copyText(url, 'Public link copied');
 }
 
 let allTokens = [];
@@ -941,7 +969,7 @@ function renderTokens() {
 
 function copyToken(btn) {
   const input = btn.parentElement.querySelector('input');
-  navigator.clipboard.writeText(input.value).then(() => toast('Token copied'));
+  copyText(input.value, 'Token copied');
 }
 
 function openTokenCreate() {
