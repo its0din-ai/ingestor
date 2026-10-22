@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -69,6 +70,18 @@ func main() {
 			"version": version.Version,
 		})
 	})
+
+	// Public, read-only assets (vendored fonts and the animation library).
+	staticDir := http.FileServer(http.Dir("templates/static"))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch filepath.Ext(r.URL.Path) {
+		case ".woff2":
+			w.Header().Set("Content-Type", "font/woff2")
+		case ".js":
+			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		}
+		staticDir.ServeHTTP(w, r)
+	})))
 
 	// Publicly shared files: unauthenticated read/download, access controlled
 	// by the public_files allowlist.

@@ -6,198 +6,352 @@
 <title>ingestor</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f1115'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%233ddc97'/%3E%3C/svg%3E">
 <style>
+@font-face{font-family:'Roboto';src:url('/static/fonts/roboto.woff2') format('woff2');font-weight:100 900;font-style:normal;font-display:swap}
+@font-face{font-family:'Red Hat Mono';src:url('/static/fonts/red-hat-mono.woff2') format('woff2');font-weight:300 700;font-style:normal;font-display:swap}
 :root{
-  --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --border:#2a2f3a;
-  --text:#e6e9ef; --muted:#8b93a7; --accent:#4f8cff; --accent2:#3b6fd4;
-  --danger:#ff5c5c; --warn:#f5b83d; --ok:#3ddc97; --radius:10px;
-  --shadow:rgba(0,0,0,.4);
+  --bg:#f8f9fa;
+  --surface:#ffffff;
+  --surface-2:#f1f3f4;
+  --surface-3:#e8eaed;
+  --ink:#202124;
+  --muted:#5f6368;
+  --outline:#dadce0;
+  --outline-strong:#bdc1c6;
+  --primary:#1a73e8;
+  --primary-hover:#1765cc;
+  --on-primary:#ffffff;
+  --primary-container:#e8f0fe;
+  --primary-container-strong:#d2e3fc;
+  --green:#188038;
+  --green-container:#e6f4ea;
+  --yellow:#9a6700;
+  --yellow-container:#fef7e0;
+  --red:#d93025;
+  --red-container:#fce8e6;
+  --google-blue:#4285f4;
+  --google-red:#ea4335;
+  --google-yellow:#fbbc04;
+  --google-green:#34a853;
+  --shadow-1:0 1px 2px rgba(60,64,67,.3),0 1px 3px 1px rgba(60,64,67,.15);
+  --shadow-2:0 1px 3px rgba(60,64,67,.3),0 4px 8px 3px rgba(60,64,67,.15);
+  --shadow-3:0 4px 8px 3px rgba(60,64,67,.15),0 8px 24px 4px rgba(60,64,67,.18);
+  --radius:12px;
+  --font:"Google Sans","Google Sans Text","Product Sans","Roboto","Helvetica Neue",Arial,sans-serif;
+  --mono:"Red Hat Mono","Roboto Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
 }
-html.light{
-  --bg:#ffffff; --panel:#ffffff; --panel2:#f4f6f9; --border:#c9d1de;
-  --text:#1a1f2e; --muted:#5b6474; --accent:#3b6fd4; --accent2:#2e57ad;
-  --danger:#e0423c; --warn:#b97a14; --ok:#1fa56f; --shadow:rgba(0,0,0,.12);
+html.dark{
+  --bg:#202124;
+  --surface:#292a2d;
+  --surface-2:#303134;
+  --surface-3:#3c4043;
+  --ink:#e8eaed;
+  --muted:#9aa0a6;
+  --outline:#3c4043;
+  --outline-strong:#5f6368;
+  --primary:#8ab4f8;
+  --primary-hover:#aecbfa;
+  --on-primary:#202124;
+  --primary-container:#1f3a5f;
+  --primary-container-strong:#284b73;
+  --green:#81c995;
+  --green-container:#1f3b28;
+  --yellow:#fdd663;
+  --yellow-container:#4a3c1a;
+  --red:#f28b82;
+  --red-container:#4a2422;
+  --shadow-1:0 1px 2px rgba(0,0,0,.3),0 1px 3px 1px rgba(0,0,0,.15);
+  --shadow-2:0 1px 3px rgba(0,0,0,.3),0 4px 8px 3px rgba(0,0,0,.15);
+  --shadow-3:0 4px 8px 3px rgba(0,0,0,.15),0 8px 24px 4px rgba(0,0,0,.18);
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;transition:background .2s,color .2s}
-a{color:var(--accent);text-decoration:none}
+body{height:100vh;display:flex;background:var(--bg);color:var(--ink);font-family:var(--font);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;transition:background .18s,color .18s}
+a{color:var(--primary);text-decoration:none}
+a:hover{text-decoration:underline}
 button{cursor:pointer;font:inherit;border:none;background:none;color:inherit}
+:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+::selection{background:var(--primary-container-strong);color:var(--ink)}
+h1,h2,h3{font-family:var(--font);font-weight:500;letter-spacing:-.01em}
+.mono{font-family:var(--mono);font-size:.82rem}
 
-.theme-toggle{display:inline-flex;align-items:center;gap:.4rem;padding:.45rem .7rem;border-radius:8px;font-size:.8rem;border:1px dashed var(--border);background:var(--panel2);color:var(--muted)}
-.theme-toggle:hover{color:var(--text)}
+/* ---- Brand mark: the product's green circle ---- */
+.logo-dot{display:block;width:14px;height:14px;border-radius:50%;background:#3ddc97;box-shadow:0 0 0 3px rgba(61,220,151,.16);flex-shrink:0}
 
-.login-wrap{flex:1;display:flex;align-items:center;justify-content:center;padding:2rem;position:relative}
-.login-stack{display:flex;flex-direction:column;width:100%;max-width:360px;gap:.8rem}
-.login-theme{width:100%;justify-content:center}
-.login-card{background:var(--panel);border:1px dashed var(--border);border-radius:14px;padding:2.2rem;width:100%;max-width:360px}
-.login-card h1{font-size:1.4rem;margin-bottom:.4rem}
-.login-card .sub{color:var(--muted);font-size:.85rem;margin-bottom:1.6rem}
-.field{margin-bottom:1rem}
-.field label{display:block;font-size:.8rem;color:var(--muted);margin-bottom:.35rem}
-.field input{width:100%;padding:.6rem .7rem;background:var(--panel2);border:1px dashed var(--border);border-radius:8px;color:var(--text);font:inherit}
-.field input:focus{outline:none;border-color:var(--accent)}
-.btn{display:inline-flex;align-items:center;gap:.4rem;padding:.6rem 1rem;border-radius:8px;font-weight:600;font-size:.9rem;transition:background .15s}
-.btn-primary{background:var(--accent);color:#fff}
-.btn-primary:hover{background:var(--accent2)}
-.btn-block{width:100%;justify-content:center}
-.error{color:var(--danger);font-size:.85rem;margin-bottom:1rem}
+/* ---- Login ---- */
+.login-page{position:relative;flex:1;min-height:100vh;display:grid;place-items:center;padding:24px;background:
+  radial-gradient(720px 380px at 50% -8%,rgba(66,133,244,.12),transparent 70%),
+  radial-gradient(520px 320px at 8% 108%,rgba(52,168,83,.07),transparent 70%),
+  var(--bg)}
+.login-stack{width:100%;max-width:420px;display:flex;flex-direction:column;gap:12px}
+.theme-toggle.login-theme{align-self:flex-end;border:none;background:var(--surface);box-shadow:var(--shadow-1);color:var(--muted);border-radius:20px;height:36px;padding:0 14px}
+.login-card{position:relative;overflow:hidden;background:var(--surface);border-radius:16px;padding:40px 36px 32px;box-shadow:var(--shadow-2)}
+.login-card::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;background:linear-gradient(90deg,var(--google-blue) 0 25%,var(--google-red) 0 50%,var(--google-yellow) 0 75%,var(--google-green) 0)}
+.login-card .logo-dot{width:32px;height:32px;margin-bottom:20px;box-shadow:0 0 0 6px rgba(61,220,151,.14)}
+.login-card h1{font-size:24px;font-weight:500;color:var(--ink)}
+.login-card .sub{color:var(--muted);font-size:14px;margin:.3rem 0 1.6rem}
+.login-foot{text-align:center;color:var(--muted);font-size:12px;font-family:var(--mono)}
 
-.sidebar{width:220px;background:var(--panel);border-right:1px dashed var(--border);display:flex;flex-direction:column;flex-shrink:0;transition:width .2s ease}
-.sidebar .brand{padding:1.3rem 1.2rem;font-weight:700;font-size:1.1rem;display:flex;align-items:center;gap:.5rem}
-.sidebar .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--ok)}
-.nav{flex:1;padding:.5rem}
-.nav a{display:flex;align-items:center;gap:.6rem;padding:.65rem .8rem;border-radius:8px;color:var(--muted);font-size:.9rem;margin-bottom:.15rem;white-space:nowrap}
-.nav a:hover{background:var(--panel2);color:var(--text)}
-.nav a.active{background:var(--panel2);color:var(--text)}
-.nav a svg{width:18px;height:18px;flex-shrink:0}
-.sidebar .foot{padding:1rem 1.2rem;border-top:1px dashed var(--border);font-size:.8rem;color:var(--muted);display:flex;flex-direction:column;gap:.6rem}
-.sidebar .foot a{display:inline-flex;align-items:center;gap:.45rem;padding:.4rem .55rem;border-radius:6px;color:var(--muted);transition:background .15s,color .15s}
-.sidebar .foot a:hover{color:var(--text);background:var(--border)}
-.sidebar .foot a svg{flex-shrink:0}
-.who{display:flex;flex-direction:column;gap:.15rem;padding:.2rem .55rem .5rem}
-.who-name{color:var(--text);font-weight:600;font-size:.82rem;word-break:break-all}
-.who-role{color:var(--muted);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em}
-.version{color:var(--muted);font-size:.7rem;padding:.2rem .55rem;opacity:.75}
-.sidebar.collapsed .who,.sidebar.collapsed .version{display:none}
-.quota-bar{height:6px;background:var(--border);border-radius:4px;overflow:hidden;min-width:90px;margin-top:.3rem}
-.quota-bar-fill{height:100%;background:var(--accent);width:0}
-.quota-bar-fill.warn{background:var(--warn)}
-.quota-bar-fill.full{background:var(--danger)}
-.sidebar-toggle{display:inline-flex;align-items:center;gap:.45rem;padding:.4rem .55rem;border-radius:6px;border:1px dashed var(--border);background:var(--panel2);color:var(--muted);font-size:.8rem;transition:background .15s,color .15s}
-.sidebar-toggle:hover{color:var(--text);background:var(--border)}
-.sidebar-toggle svg{width:15px;height:15px;flex-shrink:0}
-.sidebar.collapsed{width:64px}
-.sidebar.collapsed .brand{justify-content:center;padding:1.3rem .5rem}
-.sidebar.collapsed .brand-name,
-.sidebar.collapsed .nav a span,
-.sidebar.collapsed .foot .theme-toggle span,
-.sidebar.collapsed .foot .sidebar-toggle span,
-.sidebar.collapsed .foot a span{display:none}
-.sidebar.collapsed .nav a{justify-content:center;padding:.65rem}
-.sidebar.collapsed .foot{padding:.8rem .5rem}
-.sidebar.collapsed .foot .theme-toggle,
-.sidebar.collapsed .foot .sidebar-toggle,
-.sidebar.collapsed .foot a{justify-content:center;padding:.45rem}
+/* ---- Controls ---- */
+.theme-toggle{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 12px;border-radius:18px;border:none;background:transparent;color:var(--muted);font-family:var(--font);font-size:12px;font-weight:500;transition:background .15s,color .15s}
+.theme-toggle:hover{background:var(--surface-2);color:var(--ink);text-decoration:none}
+.field{margin-bottom:18px}
+.field label{display:block;margin-bottom:6px;color:var(--muted);font-size:12px;font-weight:500;letter-spacing:.01em}
+.field input,.field textarea,input[type=text],input[type=password],input[type=number],textarea{width:100%;min-height:48px;padding:12px 14px;border:1px solid var(--outline);border-radius:4px;background:var(--surface);color:var(--ink);font:inherit;transition:border-color .15s,box-shadow .15s}
+.field input:hover,input[type=text]:hover,input[type=password]:hover,input[type=number]:hover,textarea:hover{border-color:var(--outline-strong)}
+.field input:focus,textarea:focus,input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}
+input[readonly]{color:var(--muted);background:var(--surface-2)}
+input[type=checkbox]{width:16px;height:16px;accent-color:var(--primary);cursor:pointer}
+textarea{min-height:120px;resize:vertical}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:40px;padding:0 24px;border-radius:20px;border:none;font-family:var(--font);font-size:14px;font-weight:500;letter-spacing:.01em;transition:background .15s,box-shadow .15s}
+.btn-primary{background:var(--primary);color:var(--on-primary)}
+.btn-primary:hover{background:var(--primary-hover);box-shadow:var(--shadow-1);text-decoration:none}
+.btn-ghost{border:1px solid var(--outline);background:transparent;color:var(--primary)}
+.btn-ghost:hover{background:var(--primary-container);border-color:transparent;text-decoration:none}
+.btn-danger{background:var(--red);color:#fff}
+.btn-danger:hover{filter:brightness(.94);text-decoration:none}
+.btn-block{width:100%}
+.error{color:var(--red);font-size:13px;margin-bottom:16px;background:var(--red-container);padding:10px 12px;border-radius:8px}
 
-.main{flex:1;overflow-y:auto;padding:1.8rem}
-.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.6rem;gap:1rem}
-.topbar h1{font-size:1.3rem}
-.topbar .meta{color:var(--muted);font-size:.85rem;margin-top:.2rem}
-.topbar .actions{display:flex;align-items:center;gap:.6rem}
+/* ---- Sidebar / navigation drawer ---- */
+.sidebar{position:relative;z-index:30;width:248px;flex-shrink:0;display:flex;flex-direction:column;background:var(--surface);border-right:1px solid var(--outline);transition:width .18s ease}
+.sidebar .brand{display:flex;align-items:center;gap:12px;padding:20px 20px 14px}
+.sidebar .brand-name{font-size:20px;font-weight:500;letter-spacing:-.02em;color:var(--ink)}
+.nav{flex:1;padding:6px 10px;overflow-y:auto}
+.nav a{display:flex;align-items:center;gap:14px;height:44px;padding:0 16px;margin:2px 0;border-radius:22px;color:var(--muted);font-size:14px;font-weight:500;white-space:nowrap;transition:background .15s,color .15s}
+.nav a:hover{background:var(--surface-2);color:var(--ink);text-decoration:none}
+.nav a.active{background:var(--primary-container);color:var(--primary)}
+.nav a svg{width:20px;height:20px;flex-shrink:0}
+.sidebar .foot{display:flex;flex-direction:column;gap:4px;padding:12px 12px 16px;border-top:1px solid var(--outline)}
+.sidebar .foot a,.sidebar .foot .theme-toggle,.sidebar .foot .sidebar-toggle{display:flex;align-items:center;gap:12px;height:40px;padding:0 14px;border-radius:20px;color:var(--muted);font-size:13px;font-weight:500;border:none;background:transparent;transition:background .15s,color .15s}
+.sidebar .foot a:hover,.sidebar .foot .theme-toggle:hover,.sidebar .foot .sidebar-toggle:hover{background:var(--surface-2);color:var(--ink);text-decoration:none}
+.sidebar .foot svg{flex-shrink:0}
+.sidebar .foot .sidebar-toggle svg{width:18px;height:18px}
+.sidebar .foot .theme-toggle svg,.sidebar .foot a svg{width:18px;height:18px}
+.who{display:flex;align-items:center;gap:12px;padding:8px 10px;margin-bottom:6px;border-radius:12px;background:var(--surface-2)}
+.avatar{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:var(--primary);color:var(--on-primary);font-size:14px;font-weight:500;text-transform:uppercase;flex-shrink:0}
+.who-meta{display:flex;flex-direction:column;min-width:0}
+.who-name{color:var(--ink);font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.who-role{color:var(--muted);font-size:11px;text-transform:capitalize}
+.version{padding:6px 14px 0;color:var(--muted);font-family:var(--mono);font-size:11px}
+.sidebar.collapsed{width:72px}
+.sidebar.collapsed .brand{justify-content:center;padding:20px 8px 14px}
+.sidebar.collapsed .brand-name,.sidebar.collapsed .nav a span,.sidebar.collapsed .foot .theme-toggle span,.sidebar.collapsed .foot .sidebar-toggle span,.sidebar.collapsed .foot a span,.sidebar.collapsed .who,.sidebar.collapsed .version{display:none}
+.sidebar.collapsed .nav a{justify-content:center;padding:0}
+.sidebar.collapsed .foot{padding:12px 8px}
+.sidebar.collapsed .foot .theme-toggle,.sidebar.collapsed .foot .sidebar-toggle,.sidebar.collapsed .foot a{justify-content:center;padding:0}
 
-.toolbar{display:flex;gap:.6rem;margin-bottom:1rem;align-items:center}
+/* ---- Main / top app bar ---- */
+.main{position:relative;flex:1;overflow-y:auto;padding:0 0 32px}
+.appbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:64px;padding:0 24px;background:var(--surface);border-bottom:1px solid var(--outline)}
+.appbar-left,.appbar-right{display:flex;align-items:center;gap:12px}
+.appbar-title{font-size:14px;font-weight:500;color:var(--muted)}
+.storage-chip{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 14px;border-radius:16px;background:var(--surface-2);color:var(--ink);font-size:12px}
+.chip-label{color:var(--muted);font-weight:500}
+#meta-disk{font-family:var(--mono);font-size:12px}
+
+/* ---- Page headers ---- */
+.topbar{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:28px 0 16px}
+.topbar h1{font-size:26px;line-height:1.2;font-weight:500;letter-spacing:-.01em}
+.topbar .meta{color:var(--muted);font-size:13px;margin-top:6px;max-width:72ch}
+.topbar .actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.eyebrow{margin-bottom:6px;color:var(--muted);font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase}
+.main > div[id^="view-"]{padding:0 24px}
+
+/* ---- Search / toolbar ---- */
+.toolbar{display:flex;gap:12px;margin-bottom:16px;align-items:center}
 .search{flex:1;position:relative}
-.search input{width:100%;padding:.6rem .8rem .6rem 2.2rem;background:var(--panel);border:1px dashed var(--border);border-radius:8px;color:var(--text);font:inherit}
-.search input:focus{outline:none;border-color:var(--accent)}
-.search svg{position:absolute;left:.7rem;top:50%;transform:translateY(-50%);width:16px;height:16px;color:var(--muted)}
-.btn-ghost{background:var(--panel);border:1px dashed var(--border)}
-.btn-ghost:hover{background:var(--panel2)}
-.btn-danger{background:var(--danger);color:#fff}
+.search input{width:100%;height:48px;padding:0 18px 0 44px;border:1px solid var(--outline);border-radius:24px;background:var(--surface);color:var(--ink);font:inherit;box-shadow:var(--shadow-1)}
+.search input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 1px var(--primary),var(--shadow-1)}
+.search svg{position:absolute;left:16px;top:50%;transform:translateY(-50%);width:18px;height:18px;color:var(--muted)}
 
-.files-table{width:100%;border-collapse:collapse;background:var(--panel);border:1px dashed var(--border);border-radius:var(--radius);overflow:hidden}
-.files-table th{text-align:left;padding:.75rem 1rem;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px dashed var(--border);background:var(--panel2)}
-.files-table td{padding:.7rem 1rem;border-bottom:1px dashed var(--border);font-size:.9rem}
+/* ---- Tables ---- */
+.table-scroll{overflow-x:auto;background:var(--surface);border:1px solid var(--outline);border-radius:var(--radius);box-shadow:var(--shadow-1)}
+.files-table{width:100%;border-collapse:separate;border-spacing:0;background:var(--surface)}
+.files-table thead tr:first-child th:first-child{border-top-left-radius:var(--radius)}
+.files-table thead tr:first-child th:last-child{border-top-right-radius:var(--radius)}
+.files-table tbody tr:last-child td:first-child{border-bottom-left-radius:var(--radius)}
+.files-table tbody tr:last-child td:last-child{border-bottom-right-radius:var(--radius)}
+.files-table th{text-align:left;padding:12px 16px;background:var(--surface-2);border-bottom:1px solid var(--outline);color:var(--muted);font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+.files-table td{padding:12px 16px;border-bottom:1px solid var(--surface-3);font-size:14px;vertical-align:middle}
 .files-table tr:last-child td{border-bottom:none}
-.files-table tr:hover td{background:var(--panel2)}
-.table-scroll{overflow-x:auto;border:1px dashed var(--border);border-radius:var(--radius);background:var(--panel)}
-.table-scroll .files-table{width:100%;min-width:980px;border:none;border-radius:0}
-.table-scroll .files-table th,.table-scroll .files-table td{white-space:nowrap}
-.table-scroll .audit-table{min-width:900px}
-.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem}
-.badge{display:inline-block;padding:.15rem .5rem;border-radius:20px;font-size:.72rem;font-weight:600}
-.badge-q{background:rgba(245,184,61,.15);color:var(--warn)}
-.badge-ok{background:rgba(61,220,151,.15);color:var(--ok)}
-.badge-public{background:rgba(79,140,255,.15);color:var(--accent)}
-html.light .badge-q{background:rgba(185,122,20,.12)}
-html.light .badge-ok{background:rgba(31,165,111,.12)}
-html.light .badge-public{background:rgba(59,111,212,.12)}
-.row-actions{display:flex;gap:.4rem;justify-content:flex-end}
-.icon-btn{padding:.35rem .6rem;border-radius:6px;font-size:.8rem;border:1px dashed var(--border);background:var(--panel2)}
-.icon-btn:hover{background:var(--border)}
-.bulk-bar{display:flex;align-items:center;gap:.5rem;padding:.6rem .8rem;margin-bottom:1rem;background:var(--panel);border:1px dashed var(--border);border-radius:var(--radius)}
-.bulk-count{color:var(--muted);font-size:.85rem;margin-right:auto}
-.bulk-bar button:disabled{opacity:.4;cursor:default}
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:50;padding:1.5rem}
-.modal-overlay.open{display:flex}
-.modal{background:var(--panel);border:1px dashed var(--border);border-radius:12px;width:100%;max-width:900px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 10px 40px var(--shadow)}
-.modal-head{display:flex;align-items:center;justify-content:space-between;gap:.8rem;padding:.8rem 1.1rem;border-bottom:1px dashed var(--border)}
-.modal-head h3{font-size:.95rem;font-weight:600;word-break:break-all}
-.modal-close{padding:.35rem .6rem;border-radius:6px;border:1px dashed var(--border);background:var(--panel2)}
-.modal-close:hover{background:var(--border)}
-.modal-body{overflow:auto;padding:1rem}
-.modal-body pre{margin:0;white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem;line-height:1.5}
-.modal-error{color:var(--danger);font-size:.85rem}
-.dropzone{margin-bottom:1rem;border:1px dashed var(--border);border-radius:var(--radius);background:var(--panel);padding:1.2rem;text-align:center;cursor:pointer;transition:background .15s}
-.dropzone.drag{background:var(--panel2);border-color:var(--accent)}
-.dz-inner p{color:var(--muted);font-size:.85rem}
-.dz-inner p.dz-title{color:var(--text);margin-bottom:.2rem}
-.dz-browse{color:var(--accent);text-decoration:underline}
-.dz-hint{font-size:.75rem}
-.dz-queue{margin-top:.8rem;text-align:left;display:flex;flex-direction:column;gap:.5rem}
-.dz-item{background:var(--panel2);border:1px dashed var(--border);border-radius:8px;padding:.55rem .8rem}
-.dz-item-head{display:flex;align-items:center;gap:.6rem;font-size:.82rem;margin-bottom:.35rem}
-.dz-name{flex:1;word-break:break-all}
-.dz-size{color:var(--muted);white-space:nowrap}
-.dz-status{font-weight:600;white-space:nowrap}
+.files-table tbody tr{transition:background .12s}
+.files-table tbody tr:hover td{background:var(--surface-2)}
+.table-scroll .files-table{min-width:900px}
+.table-scroll .audit-table{min-width:860px}
+#files-body td:nth-child(3),#files-body td:nth-child(4),#files-body td:nth-child(6),
+#exfil-body td:nth-child(3),#exfil-body td:nth-child(4),#exfil-body td:nth-child(6),
+#audit-body td:nth-child(1),#audit-body td:nth-child(4),
+#users-body td:nth-child(1),#users-body td:nth-child(3),#users-body td:nth-child(4),#users-body td:nth-child(6),
+#tokens-body td:nth-child(1),#tokens-body td:nth-child(3){font-family:var(--mono);font-size:12px}
+
+/* ---- Chips / status ---- */
+.badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:8px;background:var(--surface-3);color:var(--muted);font-size:12px;font-weight:500;letter-spacing:.01em}
+.badge-q{background:var(--yellow-container);color:var(--yellow)}
+.badge-ok{background:var(--green-container);color:var(--green)}
+.badge-public{background:var(--primary-container);color:var(--primary)}
+.badge-user{background:var(--yellow-container);color:var(--yellow)}
+.badge-action{display:inline-flex;align-items:center;padding:3px 10px;border-radius:8px;background:var(--surface-2);color:var(--muted);font-family:var(--mono);font-size:11px}
+.row-actions{display:flex;gap:4px;justify-content:flex-end;flex-wrap:wrap}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 12px;border-radius:8px;border:none;background:transparent;color:var(--primary);font-size:12px;font-weight:500;transition:background .15s}
+.icon-btn:hover{background:var(--primary-container);text-decoration:none}
+.bulk-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;margin:16px 24px;background:var(--surface);border:1px solid var(--outline);border-radius:12px;box-shadow:var(--shadow-1)}
+.bulk-count{margin-right:auto;color:var(--muted);font-size:13px}
+.bulk-bar button:disabled{opacity:.38;cursor:default}
+.empty{padding:48px 24px;background:var(--surface);border:1px solid var(--outline);border-radius:var(--radius);text-align:center;color:var(--muted);font-size:14px}
+.empty-row td{padding:40px 24px;text-align:center;color:var(--muted);font-size:14px}
+.empty-row:hover td{background:transparent}
+
+/* ---- Dropzone ---- */
+.dropzone{margin-bottom:16px;padding:32px 24px;border:1px dashed var(--outline-strong);border-radius:var(--radius);background:var(--surface);text-align:center;cursor:pointer;transition:background .15s,border-color .15s}
+.dropzone:hover{background:var(--surface-2);border-color:var(--primary)}
+.dropzone.drag{background:var(--primary-container);border-color:var(--primary)}
+.dz-inner p{color:var(--muted);font-size:13px}
+.dz-inner p.dz-title{margin-bottom:4px;color:var(--ink);font-size:18px;font-weight:500}
+.dz-browse{color:var(--primary);font-weight:500}
+.dz-hint{font-size:13px}
+.dz-queue{display:flex;flex-direction:column;gap:8px;margin-top:16px;text-align:left}
+.dz-item{padding:10px 14px;border-radius:8px;background:var(--surface-2)}
+.dz-item-head{display:flex;align-items:center;gap:10px;margin-bottom:6px;font-size:13px}
+.dz-name{flex:1;word-break:break-all;font-family:var(--mono);font-size:12px}
+.dz-size{white-space:nowrap;color:var(--muted);font-family:var(--mono);font-size:12px}
+.dz-status{white-space:nowrap;font-size:11px;font-weight:500;text-transform:capitalize}
 .dz-status.queued{color:var(--muted)}
-.dz-status.uploading{color:var(--accent)}
-.dz-status.done{color:var(--ok)}
-.dz-status.error{color:var(--danger)}
-.dz-bar{height:6px;background:var(--border);border-radius:4px;overflow:hidden}
-.dz-bar-fill{height:100%;background:var(--accent);width:0;transition:width .15s}
-.empty{padding:3rem;text-align:center;color:var(--muted)}
+.dz-status.uploading{color:var(--primary)}
+.dz-status.done{color:var(--green)}
+.dz-status.error{color:var(--red)}
+.dz-bar{height:4px;overflow:hidden;border-radius:2px;background:var(--surface-3)}
+.dz-bar-fill{height:100%;width:0;background:var(--primary);transition:width .15s}
 
-.card{background:var(--panel);border:1px dashed var(--border);border-radius:var(--radius);padding:1.5rem;max-width:100%}
-.card h2{font-size:1rem;margin-bottom:1.2rem}
-.card .hint{color:var(--muted);font-size:.78rem;margin-top:.3rem}
-textarea{width:100%;padding:.6rem .7rem;background:var(--panel2);border:1px dashed var(--border);border-radius:8px;color:var(--text);font:inherit;min-height:120px;resize:vertical}
-textarea:focus{outline:none;border-color:var(--accent)}
-.field-row{display:flex;gap:.8rem}
+/* ---- Cards / settings ---- */
+.card{max-width:780px;padding:24px;background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow-1)}
+.card h2{margin-bottom:20px;font-size:20px;font-weight:500}
+.card .hint{margin-top:4px;color:var(--muted);font-size:12px}
+.field-row{display:flex;gap:16px}
 .field-row .field{flex:1}
-.copy-row{display:flex;gap:.5rem}
-.copy-row input{flex:1}
-.copy-row textarea{flex:1}
-.copy-btn{flex-shrink:0;padding:.6rem .9rem;border-radius:8px;font-size:.85rem;font-weight:600;white-space:nowrap}
+#s-upload_dir,#s-quarantine_extensions{font-family:var(--mono);font-size:13px}
+#tok-expiry{font-family:var(--mono)}
+.copy-row{display:flex;gap:8px;align-items:center}
+.copy-row input{flex:1;min-height:40px;font-family:var(--mono);font-size:12px}
+.copy-row textarea{flex:1;font-family:var(--mono)}
+.copy-btn{flex-shrink:0;height:40px;padding:0 18px;border-radius:20px;font-size:13px;font-weight:500;white-space:nowrap}
 
-.toast{position:fixed;bottom:1.5rem;right:1.5rem;background:var(--panel2);border:1px dashed var(--border);border-left:3px dashed var(--ok);padding:.8rem 1.1rem;border-radius:8px;font-size:.9rem;box-shadow:0 6px 24px var(--shadow);animation:slide .2s ease}
-.toast.err{border-left-color:var(--danger)}
-@keyframes slide{from{transform:translateY(10px);opacity:0}to{transform:none;opacity:1}}
+/* ---- Dialogs ---- */
+.modal-overlay{position:fixed;inset:0;z-index:80;display:none;align-items:center;justify-content:center;padding:24px;background:rgba(32,33,36,.5)}
+.modal-overlay.open{display:flex}
+.modal{display:flex;flex-direction:column;width:100%;max-width:900px;max-height:85vh;background:var(--surface);border-radius:16px;box-shadow:var(--shadow-3);overflow:hidden}
+.modal-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:20px 24px 12px}
+.modal-head h3{font-size:20px;font-weight:500;word-break:break-all}
+.modal-close{display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 12px;border-radius:8px;background:transparent;color:var(--primary);font-size:12px;font-weight:500}
+.modal-close:hover{background:var(--primary-container)}
+.modal-body{overflow:auto;padding:0 24px 24px}
+.modal-body pre{margin:0;white-space:pre-wrap;word-break:break-all;font-family:var(--mono);font-size:12px;line-height:1.6;background:var(--surface-2);padding:16px;border-radius:8px}
+.modal-error{color:var(--red);font-size:13px}
 
-.pager{display:flex;align-items:center;gap:.6rem;margin-top:1rem;justify-content:flex-end}
-.pager .info{color:var(--muted);font-size:.85rem;margin-right:.4rem}
-.pager button{padding:.4rem .8rem;border-radius:6px;border:1px dashed var(--border);background:var(--panel2);font-size:.85rem}
-.pager button:disabled{opacity:.4;cursor:default}
-.pager button:not(:disabled):hover{background:var(--border)}
-.audit-detail-row td{padding:0 1rem 1rem 1rem;border-bottom:1px dashed var(--border)}
-.audit-detail{background:var(--panel2);border:1px dashed var(--border);border-radius:6px;padding:.7rem .9rem;font-size:.82rem;white-space:pre-wrap;word-break:break-all}
-.badge-action{display:inline-block;padding:.15rem .5rem;border-radius:20px;font-size:.72rem;font-weight:600;background:var(--panel2);border:1px dashed var(--border)}
+/* ---- Snackbar ---- */
+.toast{position:fixed;left:24px;bottom:24px;z-index:100;max-width:min(420px,calc(100vw - 48px));padding:12px 16px;border-radius:4px;background:#323232;color:#fff;box-shadow:var(--shadow-2);font-size:14px;animation:slide .18s ease}
+.toast.err{border-left:4px solid var(--google-red)}
+@keyframes slide{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
+
+/* ---- Audit / pager ---- */
+.pager{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:16px;font-size:13px}
+.pager .info{margin-right:8px;color:var(--muted)}
+.pager button{height:32px;padding:0 14px;border-radius:16px;background:transparent;color:var(--primary);font-size:12px;font-weight:500}
+.pager button:hover{background:var(--primary-container)}
+.pager button:disabled{opacity:.38;cursor:default}
+.audit-detail-row td{padding:12px 16px;border-bottom:1px solid var(--surface-3)}
+.audit-detail{padding:12px 16px;border-radius:8px;background:var(--surface-2);font-family:var(--mono);font-size:12px;white-space:pre-wrap;word-break:break-all}
 .audit-clickable{cursor:pointer}
-.audit-clickable:hover td{background:var(--panel2)}
-.docs{max-width:100%}
-.docs h2{font-size:1.05rem;margin:1.6rem 0 .6rem;padding-bottom:.4rem;border-bottom:1px dashed var(--border)}
+.audit-clickable:hover td{background:var(--surface-2)}
+
+/* ---- Quota ---- */
+.quota-bar{height:4px;min-width:100px;margin-top:6px;overflow:hidden;border-radius:2px;background:var(--surface-3)}
+.quota-bar-fill{height:100%;width:0;background:var(--green);transition:width .2s}
+.quota-bar-fill.warn{background:var(--google-yellow)}
+.quota-bar-fill.full{background:var(--red)}
+
+/* ---- Docs ---- */
+.docs-layout{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:40px;align-items:start;max-width:1120px}
+.docs{max-width:none;min-width:0}
+.docs-toc{position:sticky;top:88px;display:flex;flex-direction:column;gap:2px;padding:16px;background:var(--surface);border-radius:12px;box-shadow:var(--shadow-1)}
+.docs-toc-title{margin:0 0 8px;padding:0 12px;color:var(--muted);font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase}
+.docs-toc a{display:block;padding:8px 12px;border-radius:8px;color:var(--muted);font-size:13px;line-height:1.35}
+.docs-toc a:hover{background:var(--surface-2);color:var(--ink);text-decoration:none}
+.docs-toc a.active{background:var(--primary-container);color:var(--primary);font-weight:500}
+.docs h2{margin:28px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--outline);font-size:20px;font-weight:500;scroll-margin-top:88px}
 .docs h2:first-child{margin-top:0}
-.docs h3{font-size:.9rem;margin:1.1rem 0 .4rem}
-.docs p{color:var(--muted);font-size:.88rem;line-height:1.55;margin:.4rem 0}
-.docs ul{margin:.4rem 0 .6rem 1.2rem;color:var(--muted);font-size:.88rem;line-height:1.7}
-.docs code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem;background:var(--panel2);padding:.12rem .35rem;border-radius:4px}
-.docs pre{background:var(--panel2);border:1px dashed var(--border);border-radius:8px;padding:.8rem 1rem;overflow-x:auto;margin:.5rem 0}
-.docs pre code{background:none;padding:0;font-size:.8rem;line-height:1.5}
-.docs table{width:100%;border-collapse:collapse;margin:.6rem 0;font-size:.85rem}
-.docs table th,.docs table td{text-align:left;padding:.5rem .7rem;border-bottom:1px dashed var(--border);color:var(--muted)}
-.docs table th{color:var(--muted);font-size:.75rem;text-transform:uppercase;letter-spacing:.04em}
+.docs h3{margin:20px 0 6px;color:var(--ink);font-size:14px;font-weight:500}
+.docs p{max-width:90ch;margin:8px 0;color:var(--muted);font-size:14px;line-height:1.65}
+.docs ul{margin:8px 0 12px 20px;color:var(--muted);font-size:14px;line-height:1.8}
+.docs code{padding:2px 6px;border-radius:4px;background:var(--surface-2);font-family:var(--mono);font-size:12px;color:var(--ink)}
+.docs pre{margin:10px 0;padding:16px 18px;overflow-x:auto;border-radius:8px;background:var(--surface-2)}
+.docs pre code{padding:0;background:none;font-size:12px;line-height:1.6}
+.docs table{width:100%;margin:12px 0;border-collapse:collapse;font-size:13px;background:var(--surface);border-radius:8px;overflow:hidden}
+.docs table th,.docs table td{padding:10px 14px;border-bottom:1px solid var(--surface-3);text-align:left;color:var(--muted)}
+.docs table th{background:var(--surface-2);color:var(--muted);font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase}
+
+/* ---- Responsive / motion ---- */
+@media (max-width:980px){
+  .docs-layout{grid-template-columns:1fr;gap:20px}
+  .docs-toc{position:static;order:-1;flex-direction:row;flex-wrap:wrap;gap:4px;padding:12px}
+  .docs-toc-title{width:100%;margin-bottom:2px}
+  .docs-toc a{padding:6px 10px;font-size:12px}
+}
+@media (prefers-reduced-motion:no-preference){
+  .main{scroll-behavior:smooth}
+}
+@media (max-width:760px){
+  .sidebar{width:72px}
+  .sidebar .brand{justify-content:center;padding:20px 8px 14px}
+  .sidebar .brand-name,.sidebar .nav a span,.sidebar .foot .theme-toggle span,.sidebar .foot .sidebar-toggle span,.sidebar .foot a span,.who,.version{display:none}
+  .sidebar .nav a{justify-content:center;padding:0}
+  .sidebar .foot{padding:12px 8px}
+  .sidebar .foot .theme-toggle,.sidebar .foot .sidebar-toggle,.sidebar .foot a{justify-content:center;padding:0}
+  .main{padding:0 0 24px}
+  .main > div[id^="view-"]{padding:0 16px}
+  .bulk-bar{margin:16px 16px}
+  .topbar{flex-direction:column;align-items:flex-start;gap:12px}
+  .topbar .actions{width:100%}
+  .appbar{padding:0 16px}
+  .field-row{flex-direction:column;gap:0}
+  .login-card{padding:32px 24px 28px}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
 </style>
 </head>
 <body>
+<script src="/static/anime.min.js"></script>
+<script>
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function animateRows(bodyId) {
+  if (!window.anime || reduceMotion) return;
+  const rows = document.querySelectorAll('#' + bodyId + ' tr');
+  if (!rows.length) return;
+  anime({targets: rows, translateX: [-6, 0], duration: 260, easing: 'easeOutCubic', delay: anime.stagger(20)});
+}
+
+function animateView(view) {
+  if (!window.anime || reduceMotion) return;
+  const root = document.getElementById('view-' + view);
+  if (!root) return;
+  const blocks = root.querySelectorAll('.topbar, .toolbar, .dropzone, .table-scroll, .card, .docs-layout, .empty');
+  if (!blocks.length) return;
+  anime({targets: blocks, translateY: [10, 0], duration: 340, easing: 'easeOutCubic', delay: anime.stagger(45)});
+}
+</script>
 
 {{if eq .View "login"}}
-<div class="login-wrap">
+<div class="login-page">
   <div class="login-stack">
     <button class="theme-toggle login-theme" onclick="toggleTheme()">
-      <svg id="theme-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-      <span id="theme-label">Light</span>
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      <span id="theme-label">Dark</span>
     </button>
     <div class="login-card">
-      <h1>ingestor</h1>
-      <div class="sub">Offensive file drop</div>
+      <span class="logo-dot" aria-hidden="true"></span>
+      <h1>Sign in</h1>
+      <div class="sub">Use your account to continue.</div>
       {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
       <form method="post" action="/login">
         <input type="hidden" name="csrf_token" value="{{.CSRF}}">
@@ -212,11 +366,12 @@ textarea:focus{outline:none;border-color:var(--accent)}
         <button type="submit" class="btn btn-primary btn-block">Sign in</button>
       </form>
     </div>
+    <div class="login-foot">Ingestor</div>
   </div>
 </div>
 {{else}}
 <div class="sidebar" id="sidebar">
-  <div class="brand"><span class="dot"></span><span class="brand-name">ingestor</span></div>
+  <div class="brand"><span class="logo-dot" aria-hidden="true"></span><span class="brand-name">Ingestor</span></div>
   <nav class="nav">
     <a href="#" data-view="files" class="active">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
@@ -251,12 +406,15 @@ textarea:focus{outline:none;border-color:var(--accent)}
   </nav>
   <div class="foot">
     <div class="who">
-      <span class="who-name">{{.Username}}</span>
-      <span class="who-role">{{.Role}}</span>
+      <span class="avatar">{{slice .Username 0 1}}</span>
+      <span class="who-meta">
+        <span class="who-name">{{.Username}}</span>
+        <span class="who-role">{{.Role}}</span>
+      </span>
     </div>
     <button class="theme-toggle" onclick="toggleTheme()">
       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-      <span id="theme-label">Light</span>
+      <span id="theme-label">Dark</span>
     </button>
     <a href="#" onclick="logout()">
       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>
@@ -271,6 +429,14 @@ textarea:focus{outline:none;border-color:var(--accent)}
 </div>
 
 <div class="main">
+  <header class="appbar">
+    <div class="appbar-left">
+      <span class="appbar-title">Workspace</span>
+    </div>
+    <div class="appbar-right">
+      <span class="storage-chip"><span class="chip-label">Storage</span> <span class="mono" id="meta-disk">…</span></span>
+    </div>
+  </header>
   <div class="bulk-bar" id="bulk-bar" style="display:none">
     <span class="bulk-count" id="bulk-count">0 selected</span>
     <button class="icon-btn" id="bulk-quarantine" onclick="bulkAction('quarantine')">Quarantine</button>
@@ -281,9 +447,9 @@ textarea:focus{outline:none;border-color:var(--accent)}
   <div id="view-files">
     <div class="topbar">
       <div>
+        <div class="eyebrow">Browser uploads</div>
         <h1>Files</h1>
-        <div class="meta">Upload directory: <span class="mono" id="meta-dir">{{.UploadDir}}</span></div>
-        <div class="meta">Disk: <span class="mono" id="meta-disk">…</span></div>
+        <div class="meta">Files uploaded from this browser.</div>
       </div>
       <button class="btn btn-ghost" onclick="loadFiles()">Refresh</button>
     </div>
@@ -296,7 +462,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
     <div class="dropzone" id="dropzone">
       <div class="dz-inner">
         <p class="dz-title">Drag &amp; drop files here or <span class="dz-browse">browse</span></p>
-        <p class="dz-hint">{{if eq .Role "superadmin"}}Uploads land in the legacy upload root, session-authenticated.{{else}}Uploads land in your storage, session-authenticated.{{end}} Multiple files upload one at a time.</p>
+        <p class="dz-hint">{{if eq .Role "superadmin"}}Uploads are stored in the shared workspace.{{else}}Uploads are stored in your personal storage.{{end}} Multiple files upload one at a time.</p>
       </div>
       <input type="file" id="dz-input" multiple hidden>
       <div class="dz-queue" id="dz-queue"></div>
@@ -307,12 +473,12 @@ textarea:focus{outline:none;border-color:var(--accent)}
         <tbody id="files-body"></tbody>
       </table>
     </div>
-    <div class="empty" id="files-empty" style="display:none">{{if eq .Role "superadmin"}}No browser uploads in the legacy upload root.{{else}}No browser uploads yet. Use the dropzone above.{{end}}</div>
+    <div class="empty" id="files-empty" style="display:none">No browser uploads yet.</div>
   </div>
 
   <div id="view-exfil" style="display:none">
     <div class="topbar">
-      <div><h1>Exfil</h1><div class="meta">Files uploaded via the API (bearer token)</div></div>
+      <div><div class="eyebrow">API uploads</div><h1>Exfil</h1><div class="meta">Files uploaded with an API token.</div></div>
       <button class="btn btn-ghost" onclick="loadFiles()">Refresh</button>
     </div>
     <div class="toolbar">
@@ -327,12 +493,12 @@ textarea:focus{outline:none;border-color:var(--accent)}
         <tbody id="exfil-body"></tbody>
       </table>
     </div>
-    <div class="empty" id="exfil-empty" style="display:none">No API uploads yet. Upload via the <span class="mono">/upload</span> endpoint.</div>
+    <div class="empty" id="exfil-empty" style="display:none">No API uploads yet. Files uploaded with an API token will appear here.</div>
   </div>
 
   <div id="view-settings" style="display:none">
     <div class="topbar">
-      <div><h1>Settings</h1><div class="meta">Changes apply immediately</div></div>
+      <div><div class="eyebrow">Configuration</div><h1>Settings</h1><div class="meta">Changes apply immediately.</div></div>
     </div>
     <div class="card">
       {{if eq .Role "superadmin"}}
@@ -367,7 +533,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
 
   <div id="view-audit" style="display:none">
     <div class="topbar">
-      <div><h1>Audit Log</h1><div class="meta">{{if eq .Role "superadmin"}}All actions performed on this server{{else}}Actions recorded for your account{{end}}</div></div>
+      <div><div class="eyebrow">Activity</div><h1>Audit Log</h1><div class="meta">{{if eq .Role "superadmin"}}All activity on this workspace{{else}}Activity for your account{{end}}</div></div>
       <button class="btn btn-ghost" onclick="loadAudit()">Refresh</button>
     </div>
     <div class="table-scroll">
@@ -382,7 +548,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
 
   <div id="view-tokens" style="display:none">
     <div class="topbar">
-      <div><h1>Tokens</h1><div class="meta" id="tokens-meta">{{if eq .Role "superadmin"}}Legacy bearer tokens for API senders. Tokens are masked by default; use the eye icon to reveal or copy them.{{else}}Your personal API token. It is masked by default; use the eye icon to reveal it or copy it anytime.{{end}}</div></div>
+      <div><div class="eyebrow">API tokens</div><h1>Tokens</h1><div class="meta" id="tokens-meta">{{if eq .Role "superadmin"}}Tokens used by API clients. Masked by default; use the eye icon to reveal or copy them.{{else}}Your personal API token. Masked by default; use the eye icon to reveal or copy it anytime.{{end}}</div></div>
       {{if eq .Role "superadmin"}}
       <button class="btn btn-primary" onclick="openTokenCreate()">Create token</button>
       {{else}}
@@ -401,7 +567,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
   {{if eq .Role "superadmin"}}
   <div id="view-users" style="display:none">
     <div class="topbar">
-      <div><h1>Users</h1><div class="meta">Manage accounts, storage quotas, and user data. File content is never shown here.</div></div>
+      <div><div class="eyebrow">Accounts</div><h1>Users</h1><div class="meta">Manage accounts, quotas, and storage.</div></div>
       <div class="actions">
         <button class="btn btn-ghost" onclick="loadUsers()">Refresh</button>
         <button class="btn btn-primary" onclick="openUserCreate()">Create user</button>
@@ -419,21 +585,22 @@ textarea:focus{outline:none;border-color:var(--accent)}
 
   <div id="view-docs" style="display:none">
     <div class="topbar">
-      <div><h1>Docs</h1><div class="meta">API usage and web features</div></div>
+      <div><div class="eyebrow">Reference</div><h1>Docs</h1><div class="meta">API usage and web features</div></div>
     </div>
-    <div class="docs">
-      <h2>Authentication</h2>
+    <div class="docs-layout">
+      <article class="docs">
+      <h2 id="docs-auth">Authentication</h2>
       <p>API uploads require a bearer token from the <strong>Tokens</strong> view, sent in the <code>Authorization</code> header:</p>
       <pre><code>Authorization: Bearer $TOKEN</code></pre>
-      <p>The dashboard uses a JWT (HS512) session cookie named <code>session</code>. Logging out destroys the token server-side, and changing a password signs out that account's active sessions. Login is rate limited to 15 attempts per 15 minutes per IP. The superadmin manages accounts from the <strong>Users</strong> view; regular users only ever see their own storage and audit entries.</p>
+      <p>The dashboard uses a secure session. Signing out revokes it immediately, and changing a password signs out that account's active sessions. Login is rate limited to 15 attempts per 15 minutes per IP. The superadmin manages accounts from the <strong>Users</strong> view; regular users only ever see their own storage and activity.</p>
 
-      <h2>Upload API</h2>
+      <h2 id="docs-upload">Upload API</h2>
       <p>Two upload paths exist:</p>
       <table>
         <thead><tr><th>Endpoint</th><th>Auth</th><th>Purpose</th><th>Stored name</th></tr></thead>
         <tbody>
           <tr><td><code>{{.BaseURL}}/upload</code></td><td>Bearer token</td><td>Arbitrary file upload (script/curl/agents)</td><td>Original name + random suffix (no collisions)</td></tr>
-          <tr><td><code>{{.BaseURL}}/dashboard/upload</code></td><td>Admin session</td><td>Browser upload from the Files view</td><td>Original name, kept as-is (refuses duplicates)</td></tr>
+          <tr><td><code>{{.BaseURL}}/dashboard/upload</code></td><td>Signed-in user</td><td>Browser upload from the Files view</td><td>Original name, kept as-is (refuses duplicates)</td></tr>
           <tr><td><code>{{.BaseURL}}/</code> (any path)</td><td>Bearer token</td><td>Accept-and-log sink for any request</td><td>—</td></tr>
         </tbody>
       </table>
@@ -453,39 +620,49 @@ textarea:focus{outline:none;border-color:var(--accent)}
 }</code></pre>
       <p>The stored filename is never returned. Uploads made with a bearer token are recorded in the audit log with the token's short id (e.g. <code>bearer token id a3f9c2 used for upload: report.pdf</code>).</p>
 
-      <h2>Web Features</h2>
+      <h2 id="docs-features">Web Features</h2>
       <ul>
         <li><strong>Files</strong> — browser uploads (drag-and-drop with progress), search, text previews, download, quarantine/release, public sharing, and delete, with per-file status and uploader IP. Shows a live disk-usage monitor (uploads / used / total, % free).</li>
         <li><strong>Exfil</strong> — the same file actions for files uploaded via the API (<code>/upload</code>), kept separate so browser uploads and token uploads are easy to tell apart.</li>
         <li><strong>Settings</strong> — hot-reload upload directory, max upload size, and quarantine extensions (superadmin), and change your own password. Changing a password logs out that account's sessions.</li>
-        <li><strong>Users</strong> — superadmin only: create accounts, set storage quotas, disable or delete users, inspect file metadata, and wipe storage. Passwords are changed by each user from Settings; the superadmin cannot reset them or access user file content. The superadmin only browses its own legacy upload root.</li>
-        <li><strong>Tokens</strong> — regular users get one personal API token (stored hashed, rotate to reveal a new one). The superadmin manages legacy <code>.env</code> bearer tokens.</li>
+        <li><strong>Users</strong> — superadmin only: create accounts, set storage quotas, disable or delete users, inspect file metadata, and wipe storage. Passwords are changed by each user from Settings; the superadmin cannot reset them or access user file content. The superadmin only browses the shared workspace.</li>
+        <li><strong>Tokens</strong> — regular users get one personal API token, masked by default in the Tokens view. The superadmin manages the workspace's API tokens.</li>
         <li><strong>Audit</strong> — paginated log of every login, upload, read, download, quarantine/release, public-share access, settings change, and file action, with client IP and User-Agent, pruned after the configured retention (default 30 days). Click a remote IP to open its <code>ipinfo.io</code> lookup in a new tab. Actions received through the CF proxy are labeled <code>via cf-proxy</code> in their summary.</li>
         <li><strong>Dark / light theme</strong> and a collapsible sidebar — toggled from the sidebar, persisted in your browser.</li>
       </ul>
 
-      <h2>Reverse Proxy (nginx / Cloudflare / FlareProx)</h2>
+      <h2 id="docs-proxy">Reverse Proxy (nginx / Cloudflare / FlareProx)</h2>
       <p>ingestor can sit behind any reverse proxy that forwards the original client IP — nginx, Cloudflare, or a <a href="https://github.com/MrTurvey/flareprox" target="_blank" rel="noopener noreferrer">FlareProx</a> Cloudflare Worker pass-through. When it does, set <code>trust_proxy_headers=true</code> in <code>.env</code> (and <code>cookie_secure=true</code> if the proxy terminates TLS) so the audit log records the real client IP and generated links use the external scheme/host. The real client IP is resolved in priority order: <code>X-Morph-Real-Ip</code>, then <code>CF-Connecting-IP</code> (Cloudflare), then <code>X-Forwarded-For</code>. Keep the setting off when clients can reach the listener directly, otherwise a client can spoof its logged IP with a forged proxy header.</p>
 
-      <h2>Health</h2>
+      <h2 id="docs-health">Health</h2>
       <pre><code>curl {{.BaseURL}}/healthz</code></pre>
 
-      <h2>Public Sharing</h2>
+      <h2 id="docs-sharing">Public Sharing</h2>
       <p>Mark any non-quarantined file as <strong>public</strong> from the Files view (share button) to make it readable or downloadable without authentication:</p>
       <pre><code>{{.BaseURL}}/pub?name={filename}</code></pre>
       <p>Text files are served inline as <code>text/plain</code>; everything else downloads as an attachment. Marking a file <strong>private</strong> (or quarantining/deleting it) revokes the link immediately. Private or quarantined files return <code>404</code> from <code>/pub</code>. Every <code>/pub</code> request — successful or denied — is recorded in the audit log with the client IP and User-Agent.</p>
 
-      <h2>Security</h2>
+      <h2 id="docs-security">Security</h2>
       <ul>
-        <li>Bearer tokens matched with constant-time comparison; each token may carry its own expiry.</li>
-        <li>Admin sessions are HS512-signed JWTs pinned to the <code>HS512</code> algorithm, with a server-side allowlist so logged-out tokens are rejected even while the signature is valid.</li>
+        <li>API tokens are matched securely and may carry their own expiry.</li>
+        <li>Sessions are signed server-side and revoked immediately when you sign out or change your password.</li>
         <li>Login is rate limited per IP; password changes invalidate all sessions.</li>
         <li>Dangerous extensions are quarantined with a <code>.quarantined</code> suffix; files can be quarantined or released from the UI.</li>
-        <li>Saved files are <code>chmod 0644</code> — execute bits stripped.</li>
+        <li>Saved files are stored without execute permissions.</li>
         <li>Filenames are sanitized against path traversal; uploads stream to disk with a size cap.</li>
-        <li>CSRF protection via a double-submit cookie, plus HttpOnly, SameSite=Strict session cookies.</li>
-        <li>SQLite runs in WAL mode with a single connection and busy timeout, so concurrent uploads cannot lock the database.</li>
+        <li>Forms are protected against cross-site request forgery.</li>
       </ul>
+      </article>
+      <aside class="docs-toc" aria-label="On this page">
+        <div class="docs-toc-title">On this page</div>
+        <a href="#docs-auth">Authentication</a>
+        <a href="#docs-upload">Upload API</a>
+        <a href="#docs-features">Web features</a>
+        <a href="#docs-proxy">Reverse proxy</a>
+        <a href="#docs-health">Health</a>
+        <a href="#docs-sharing">Public sharing</a>
+        <a href="#docs-security">Security</a>
+      </aside>
     </div>
   </div>
 </div>
@@ -739,18 +916,29 @@ function fileRowHTML(f) {
     '</div></td>';
 }
 
+function appendEmptyRow(bodyId, empty) {
+  const body = document.getElementById(bodyId);
+  const cols = body.closest('table').querySelectorAll('thead th').length;
+  const tr = document.createElement('tr');
+  tr.className = 'empty-row';
+  tr.innerHTML = '<td colspan="' + cols + '">' + esc(empty.textContent.trim()) + '</td>';
+  body.appendChild(tr);
+}
+
 function renderTable(bodyId, emptyId, rows) {
   const body = document.getElementById(bodyId);
   const empty = document.getElementById(emptyId);
   body.innerHTML = '';
-  empty.style.display = rows.length ? 'none' : 'block';
+  empty.style.display = 'none';
   for (const f of rows) {
     const tr = document.createElement('tr');
     tr.innerHTML = fileRowHTML(f);
     body.appendChild(tr);
   }
+  if (!rows.length) appendEmptyRow(bodyId, empty);
   collectSelection();
   updateBulkBar();
+  animateRows(bodyId);
 }
 
 function renderFiles() {
@@ -1088,7 +1276,7 @@ function renderTokens() {
   const body = document.getElementById('tokens-body');
   const empty = document.getElementById('tokens-empty');
   body.innerHTML = '';
-  empty.style.display = allTokens.length ? 'none' : 'block';
+  empty.style.display = 'none';
   for (const t of allTokens) {
     const tr = document.createElement('tr');
     const tokenCell = t.token
@@ -1108,6 +1296,8 @@ function renderTokens() {
       '<td><div class="row-actions">' + action + '</div></td>';
     body.appendChild(tr);
   }
+  if (!allTokens.length) appendEmptyRow('tokens-body', empty);
+  animateRows('tokens-body');
 }
 
 function copyToken(btn) {
@@ -1246,7 +1436,7 @@ function renderUsers() {
   const body = document.getElementById('users-body');
   const empty = document.getElementById('users-empty');
   body.innerHTML = '';
-  empty.style.display = allUsers.length ? 'none' : 'block';
+  empty.style.display = 'none';
   for (const u of allUsers) {
     const tr = document.createElement('tr');
     const status = u.disabled
@@ -1261,7 +1451,7 @@ function renderUsers() {
         '</div>';
     tr.innerHTML =
       '<td class="mono">' + esc(u.username) + '</td>' +
-      '<td>' + (u.role === 'superadmin' ? '<span class="badge badge-public">superadmin</span>' : 'user') + '</td>' +
+      '<td>' + (u.role === 'superadmin' ? '<span class="badge badge-public">superadmin</span>' : '<span class="badge badge-user">user</span>') + '</td>' +
       '<td>' + quotaHTML(u) + '</td>' +
       '<td>' + (u.files || 0) + '</td>' +
       '<td>' + status + '</td>' +
@@ -1269,6 +1459,8 @@ function renderUsers() {
       '<td>' + actions + '</td>';
     body.appendChild(tr);
   }
+  if (!allUsers.length) appendEmptyRow('users-body', empty);
+  animateRows('users-body');
 }
 
 function openUserCreate() {
@@ -1387,7 +1579,7 @@ async function loadUserFiles() {
     const res = await fetch('/dashboard/api/users/files?user_id=' + activeUserFiles.id);
     const data = await res.json();
     const files = data.files || [];
-    empty.style.display = files.length ? 'none' : 'block';
+    empty.style.display = 'none';
     for (const f of files) {
       const tr = document.createElement('tr');
       tr.innerHTML =
@@ -1398,6 +1590,7 @@ async function loadUserFiles() {
         '<td><div class="row-actions"><button class="icon-btn" onclick="deleteUserFile(this)" data-name="' + esc(f.name) + '" style="color:var(--danger)">delete</button></div></td>';
       body.appendChild(tr);
     }
+    if (!files.length) appendEmptyRow('user-files-body', empty);
   } catch (e) {
     toast('Failed to load user files', true);
   }
@@ -1482,7 +1675,6 @@ async function saveSettings() {
       toast('Settings saved');
       document.getElementById('s-admin_password').value = '';
       document.getElementById('s-current_password').value = '';
-      if (payload.upload_dir) document.getElementById('meta-dir').textContent = payload.upload_dir;
       loadSettings();
     } else {
       let msg = 'Save failed';
@@ -1505,6 +1697,8 @@ function switchView(view) {
   if (view === 'audit') loadAudit(1);
   if (view === 'tokens') loadTokens();
   if (view === 'users') loadUsers();
+  loadDisk();
+  animateView(view);
 }
 
 function logout() {
@@ -1531,7 +1725,7 @@ function renderAudit(entries) {
   const body = document.getElementById('audit-body');
   const empty = document.getElementById('audit-empty');
   body.innerHTML = '';
-  empty.style.display = entries.length ? 'none' : 'block';
+  empty.style.display = 'none';
   for (const a of entries) {
     const tr = document.createElement('tr');
     tr.className = 'audit-clickable';
@@ -1554,6 +1748,8 @@ function renderAudit(entries) {
       body.appendChild(det);
     }
   }
+  if (!entries.length) appendEmptyRow('audit-body', empty);
+  animateRows('audit-body');
 }
 
 function ipLookupHTML(ip) {
@@ -1601,6 +1797,7 @@ function toggleSidebar() {
   if (sb && localStorage.getItem('sidebar') === 'collapsed') sb.classList.add('collapsed');
 })();
 
+loadDisk();
 if (defaultView && defaultView !== 'files') {
   switchView(defaultView);
 } else {
@@ -1610,16 +1807,43 @@ if (defaultView && defaultView !== 'files') {
 {{end}}
 
 <script>
-function applyTheme(light) {
-  document.documentElement.classList.toggle('light', light);
+function applyTheme(dark) {
+  document.documentElement.classList.toggle('dark', dark);
   const label = document.getElementById('theme-label');
-  if (label) label.textContent = light ? 'Dark' : 'Light';
-  localStorage.setItem('theme', light ? 'light' : 'dark');
+  if (label) label.textContent = dark ? 'Light' : 'Dark';
+  localStorage.setItem('theme', dark ? 'dark' : 'light');
 }
 function toggleTheme() {
-  applyTheme(!document.documentElement.classList.contains('light'));
+  applyTheme(!document.documentElement.classList.contains('dark'));
 }
-applyTheme(localStorage.getItem('theme') === 'light');
+applyTheme(localStorage.getItem('theme') === 'dark');
+
+(function animateLogin() {
+  if (!window.anime || reduceMotion || !document.querySelector('.login-card')) return;
+  anime({targets: '.login-card', translateY: [14, 0], scale: [.985, 1], duration: 480, easing: 'easeOutCubic'});
+  anime({targets: '.login-card .logo-dot', scale: [.5, 1], duration: 420, easing: 'easeOutBack', delay: 80});
+  anime({targets: '.login-card .field, .login-card .btn', translateY: [8, 0], duration: 320, easing: 'easeOutCubic', delay: anime.stagger(60, {start: 140})});
+})();
+
+(function docsScrollSpy() {
+  const links = Array.from(document.querySelectorAll('.docs-toc a'));
+  if (!links.length || !('IntersectionObserver' in window)) return;
+  const map = new Map();
+  links.forEach(a => {
+    const h = document.querySelector(a.getAttribute('href'));
+    if (h) map.set(h, a);
+  });
+  if (links[0]) links[0].classList.add('active');
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (!e.isIntersecting) return;
+      links.forEach(a => a.classList.remove('active'));
+      const a = map.get(e.target);
+      if (a) a.classList.add('active');
+    });
+  }, {root: document.querySelector('.main'), rootMargin: '-80px 0px -70% 0px', threshold: 0});
+  map.forEach((_, h) => obs.observe(h));
+})();
 </script>
 
 </body>

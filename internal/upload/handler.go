@@ -300,6 +300,12 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request, src io.Reader, na
 			finalPath = filepath.Join(dir, finalName)
 		}
 	}
+	// If every retry still collided, fail instead of letting os.Rename
+	// silently overwrite an existing file.
+	if _, err := os.Stat(finalPath); err == nil {
+		h.fail(w, http.StatusConflict, "a file with that name already exists")
+		return
+	}
 
 	if err := os.Rename(tmpName, finalPath); err != nil {
 		h.fail(w, http.StatusInternalServerError, "failed to move file")

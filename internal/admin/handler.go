@@ -316,9 +316,6 @@ func (h *Handler) render(w http.ResponseWriter, r *http.Request, view string, cs
 		data.Role = u.Role
 		data.Username = u.Username
 		data.UserID = u.ID
-		if u.IsSuperadmin() {
-			data.DefaultView = "users"
-		}
 		if u.IsUser() {
 			dir := users.UserDir(h.cfg.UploadDir(), u.ID)
 			data.UploadDir = dir

@@ -563,7 +563,7 @@ func (h *Handler) PublicFile(w http.ResponseWriter, r *http.Request) {
 
 // Delete removes a stored file.
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
-	dir, _, _, ok := h.scope(r)
+	dir, userID, _, ok := h.scope(r)
 	if !ok {
 		web.JSON(w, http.StatusForbidden, web.ErrorResponse{Status: "error", Message: "forbidden"})
 		return
@@ -592,6 +592,9 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	// A deleted file must not leave behind a public grant that a future
+	// upload with the same name would inherit.
+	_ = db.MarkPrivate(h.conn, userID, filepath.Base(path))
 
 	h.auditLog.Delete(r, filepath.Base(path))
 
