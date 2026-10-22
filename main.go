@@ -20,6 +20,7 @@ import (
 	"github.com/encrypt0r/ingestor/internal/db"
 	"github.com/encrypt0r/ingestor/internal/logging"
 	"github.com/encrypt0r/ingestor/internal/upload"
+	"github.com/encrypt0r/ingestor/internal/version"
 	"github.com/encrypt0r/ingestor/internal/web"
 )
 
@@ -62,7 +63,11 @@ func main() {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		web.JSON(w, http.StatusOK, web.ErrorResponse{Status: "ok", Message: "healthy"})
+		web.JSON(w, http.StatusOK, map[string]string{
+			"status":  "ok",
+			"message": "healthy",
+			"version": version.Version,
+		})
 	})
 
 	// Publicly shared files: unauthenticated read/download, access controlled
@@ -72,7 +77,7 @@ func main() {
 	// root: GET redirects to login/dashboard; other methods are the
 	// bearer-protected upload sink (accept-and-log-everything).
 	rootRedirect := sessions.Root()
-	bearerUpload := auth.Bearer(cfg, auditLog)(uploadHandler)
+	bearerUpload := auth.Bearer(cfg, conn, auditLog)(uploadHandler)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			rootRedirect(w, r)
@@ -109,10 +114,23 @@ func main() {
 	dashMux.HandleFunc("GET /dashboard/api/tokens", adminHandler.ListTokens)
 	dashMux.HandleFunc("POST /dashboard/api/tokens", adminHandler.CreateToken)
 	dashMux.HandleFunc("POST /dashboard/api/tokens/delete", adminHandler.DeleteToken)
+	dashMux.HandleFunc("POST /dashboard/api/user-token/rotate", adminHandler.RotateToken)
+
+	// User management (superadmin only). Admin middleware resolves the session
+	// user; Superadmin then enforces the role.
+	super := sessions.Superadmin()
+	dashMux.Handle("GET /dashboard/api/users", super(http.HandlerFunc(adminHandler.ListUsers)))
+	dashMux.Handle("POST /dashboard/api/users/create", super(http.HandlerFunc(adminHandler.CreateUser)))
+	dashMux.Handle("POST /dashboard/api/users/update", super(http.HandlerFunc(adminHandler.UpdateUser)))
+	dashMux.Handle("POST /dashboard/api/users/delete", super(http.HandlerFunc(adminHandler.DeleteUser)))
+	dashMux.Handle("GET /dashboard/api/users/files", super(http.HandlerFunc(adminHandler.UserFiles)))
+	dashMux.Handle("POST /dashboard/api/users/delete-file", super(http.HandlerFunc(adminHandler.DeleteUserFile)))
+	dashMux.Handle("POST /dashboard/api/users/wipe", super(http.HandlerFunc(adminHandler.WipeUser)))
+
 	mux.Handle("/dashboard/", sessions.Admin()(dashMux))
 
 	// upload API (bearer protected)
-	mux.Handle("/upload", auth.Bearer(cfg, auditLog)(uploadHandler))
+	mux.Handle("/upload", auth.Bearer(cfg, conn, auditLog)(uploadHandler))
 
 	addr := cfg.Addr()
 	writeTimeout := cfg.WriteTimeout()
@@ -130,7 +148,7 @@ func main() {
 		WriteTimeout:      writeTimeout,
 		MaxHeaderBytes:    1 << 20,
 	}
-	slog.Info("ingestor listening", "addr", addr, "write_timeout", writeTimeout.String())
+	slog.Info("ingestor listening", "addr", addr, "version", version.Version, "write_timeout", writeTimeout.String())
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

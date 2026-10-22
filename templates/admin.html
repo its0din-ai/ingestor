@@ -53,6 +53,15 @@ button{cursor:pointer;font:inherit;border:none;background:none;color:inherit}
 .sidebar .foot a{display:inline-flex;align-items:center;gap:.45rem;padding:.4rem .55rem;border-radius:6px;color:var(--muted);transition:background .15s,color .15s}
 .sidebar .foot a:hover{color:var(--text);background:var(--border)}
 .sidebar .foot a svg{flex-shrink:0}
+.who{display:flex;flex-direction:column;gap:.15rem;padding:.2rem .55rem .5rem}
+.who-name{color:var(--text);font-weight:600;font-size:.82rem;word-break:break-all}
+.who-role{color:var(--muted);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em}
+.version{color:var(--muted);font-size:.7rem;padding:.2rem .55rem;opacity:.75}
+.sidebar.collapsed .who,.sidebar.collapsed .version{display:none}
+.quota-bar{height:6px;background:var(--border);border-radius:4px;overflow:hidden;min-width:90px;margin-top:.3rem}
+.quota-bar-fill{height:100%;background:var(--accent);width:0}
+.quota-bar-fill.warn{background:var(--warn)}
+.quota-bar-fill.full{background:var(--danger)}
 .sidebar-toggle{display:inline-flex;align-items:center;gap:.45rem;padding:.4rem .55rem;border-radius:6px;border:1px dashed var(--border);background:var(--panel2);color:var(--muted);font-size:.8rem;transition:background .15s,color .15s}
 .sidebar-toggle:hover{color:var(--text);background:var(--border)}
 .sidebar-toggle svg{width:15px;height:15px;flex-shrink:0}
@@ -193,8 +202,12 @@ textarea:focus{outline:none;border-color:var(--accent)}
       <form method="post" action="/login">
         <input type="hidden" name="csrf_token" value="{{.CSRF}}">
         <div class="field">
-          <label>Passcode</label>
-          <input type="password" name="password" autofocus required>
+          <label>Username</label>
+          <input type="text" name="username" value="admin" autocomplete="username" autofocus required>
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <input type="password" name="password" autocomplete="current-password" required>
         </div>
         <button type="submit" class="btn btn-primary btn-block">Sign in</button>
       </form>
@@ -213,6 +226,12 @@ textarea:focus{outline:none;border-color:var(--accent)}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg>
       <span>Exfil</span>
     </a>
+    {{if eq .Role "superadmin"}}
+    <a href="#" data-view="users">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      <span>Users</span>
+    </a>
+    {{end}}
     <a href="#" data-view="docs">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
       <span>Docs</span>
@@ -231,6 +250,10 @@ textarea:focus{outline:none;border-color:var(--accent)}
     </a>
   </nav>
   <div class="foot">
+    <div class="who">
+      <span class="who-name">{{.Username}}</span>
+      <span class="who-role">{{.Role}}</span>
+    </div>
     <button class="theme-toggle" onclick="toggleTheme()">
       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
       <span id="theme-label">Light</span>
@@ -243,6 +266,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 6-6 6 6 6"/></svg>
       <span>Collapse</span>
     </button>
+    <div class="version">v{{.Version}}</div>
   </div>
 </div>
 
@@ -272,7 +296,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
     <div class="dropzone" id="dropzone">
       <div class="dz-inner">
         <p class="dz-title">Drag &amp; drop files here or <span class="dz-browse">browse</span></p>
-        <p class="dz-hint">Uploads land in the upload directory, session-authenticated. Multiple files upload one at a time.</p>
+        <p class="dz-hint">{{if eq .Role "superadmin"}}Uploads land in the legacy upload root, session-authenticated.{{else}}Uploads land in your storage, session-authenticated.{{end}} Multiple files upload one at a time.</p>
       </div>
       <input type="file" id="dz-input" multiple hidden>
       <div class="dz-queue" id="dz-queue"></div>
@@ -283,7 +307,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
         <tbody id="files-body"></tbody>
       </table>
     </div>
-    <div class="empty" id="files-empty" style="display:none">No browser uploads yet. Use the dropzone above.</div>
+    <div class="empty" id="files-empty" style="display:none">{{if eq .Role "superadmin"}}No browser uploads in the legacy upload root.{{else}}No browser uploads yet. Use the dropzone above.{{end}}</div>
   </div>
 
   <div id="view-exfil" style="display:none">
@@ -311,6 +335,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
       <div><h1>Settings</h1><div class="meta">Changes apply immediately</div></div>
     </div>
     <div class="card">
+      {{if eq .Role "superadmin"}}
       <h2>Configuration</h2>
       <div class="field">
         <label>Upload directory</label>
@@ -325,14 +350,16 @@ textarea:focus{outline:none;border-color:var(--accent)}
         <textarea id="s-quarantine_extensions"></textarea>
         <div class="hint">Comma-separated. Matched uploads are saved with a <span class="mono">.quarantined</span> suffix.</div>
       </div>
+      {{end}}
+      <h2>Account password</h2>
       <div class="field">
-        <label>Current admin password</label>
+        <label>Current password</label>
         <input type="password" id="s-current_password" autocomplete="current-password">
       </div>
       <div class="field">
-        <label>New admin password (leave blank to keep current)</label>
+        <label>New password (leave blank to keep current)</label>
         <input type="password" id="s-admin_password" autocomplete="new-password">
-        <div class="hint">Changing the password requires the current password and signs out all sessions.</div>
+        <div class="hint">At least 12 characters. Changing the password signs out this account's sessions.</div>
       </div>
       <button class="btn btn-primary" onclick="saveSettings()">Save settings</button>
     </div>
@@ -340,7 +367,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
 
   <div id="view-audit" style="display:none">
     <div class="topbar">
-      <div><h1>Audit Log</h1><div class="meta">All actions performed on this server</div></div>
+      <div><h1>Audit Log</h1><div class="meta">{{if eq .Role "superadmin"}}All actions performed on this server{{else}}Actions recorded for your account{{end}}</div></div>
       <button class="btn btn-ghost" onclick="loadAudit()">Refresh</button>
     </div>
     <div class="table-scroll">
@@ -355,8 +382,12 @@ textarea:focus{outline:none;border-color:var(--accent)}
 
   <div id="view-tokens" style="display:none">
     <div class="topbar">
-      <div><h1>Tokens</h1><div class="meta">Bearer tokens for API senders. Full tokens are shown here so you can copy and share them.</div></div>
+      <div><h1>Tokens</h1><div class="meta" id="tokens-meta">{{if eq .Role "superadmin"}}Legacy bearer tokens for API senders. Tokens are masked by default; use the eye icon to reveal or copy them.{{else}}Your personal API token. It is masked by default; use the eye icon to reveal it or copy it anytime.{{end}}</div></div>
+      {{if eq .Role "superadmin"}}
       <button class="btn btn-primary" onclick="openTokenCreate()">Create token</button>
+      {{else}}
+      <button class="btn btn-primary" onclick="rotateOwnToken()">Rotate token</button>
+      {{end}}
     </div>
     <div class="table-scroll">
       <table class="files-table">
@@ -367,6 +398,25 @@ textarea:focus{outline:none;border-color:var(--accent)}
     <div class="empty" id="tokens-empty" style="display:none">No tokens yet. Create one to enable API uploads.</div>
   </div>
 
+  {{if eq .Role "superadmin"}}
+  <div id="view-users" style="display:none">
+    <div class="topbar">
+      <div><h1>Users</h1><div class="meta">Manage accounts, storage quotas, and user data. File content is never shown here.</div></div>
+      <div class="actions">
+        <button class="btn btn-ghost" onclick="loadUsers()">Refresh</button>
+        <button class="btn btn-primary" onclick="openUserCreate()">Create user</button>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table class="files-table">
+        <thead><tr><th>User</th><th>Role</th><th>Storage</th><th>Files</th><th>Status</th><th>Last login</th><th></th></tr></thead>
+        <tbody id="users-body"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="users-empty" style="display:none">No users yet. Create one to give someone their own storage.</div>
+  </div>
+  {{end}}
+
   <div id="view-docs" style="display:none">
     <div class="topbar">
       <div><h1>Docs</h1><div class="meta">API usage and web features</div></div>
@@ -375,7 +425,7 @@ textarea:focus{outline:none;border-color:var(--accent)}
       <h2>Authentication</h2>
       <p>API uploads require a bearer token from the <strong>Tokens</strong> view, sent in the <code>Authorization</code> header:</p>
       <pre><code>Authorization: Bearer $TOKEN</code></pre>
-      <p>The admin console uses a JWT (HS512) session cookie named <code>session</code>. Logging out destroys the token server-side, and changing the admin password signs out every active session. Login is rate limited to 15 attempts per 15 minutes per IP.</p>
+      <p>The dashboard uses a JWT (HS512) session cookie named <code>session</code>. Logging out destroys the token server-side, and changing a password signs out that account's active sessions. Login is rate limited to 15 attempts per 15 minutes per IP. The superadmin manages accounts from the <strong>Users</strong> view; regular users only ever see their own storage and audit entries.</p>
 
       <h2>Upload API</h2>
       <p>Two upload paths exist:</p>
@@ -407,8 +457,9 @@ textarea:focus{outline:none;border-color:var(--accent)}
       <ul>
         <li><strong>Files</strong> — browser uploads (drag-and-drop with progress), search, text previews, download, quarantine/release, public sharing, and delete, with per-file status and uploader IP. Shows a live disk-usage monitor (uploads / used / total, % free).</li>
         <li><strong>Exfil</strong> — the same file actions for files uploaded via the API (<code>/upload</code>), kept separate so browser uploads and token uploads are easy to tell apart.</li>
-        <li><strong>Settings</strong> — hot-reload upload directory, max upload size, quarantine extensions, and admin password. Changing the admin password logs out all sessions.</li>
-        <li><strong>Tokens</strong> — create, copy, and delete bearer upload tokens, each with an optional label and expiry. Omit the expiry for an indefinite token.</li>
+        <li><strong>Settings</strong> — hot-reload upload directory, max upload size, and quarantine extensions (superadmin), and change your own password. Changing a password logs out that account's sessions.</li>
+        <li><strong>Users</strong> — superadmin only: create accounts, set storage quotas, disable or delete users, inspect file metadata, and wipe storage. Passwords are changed by each user from Settings; the superadmin cannot reset them or access user file content. The superadmin only browses its own legacy upload root.</li>
+        <li><strong>Tokens</strong> — regular users get one personal API token (stored hashed, rotate to reveal a new one). The superadmin manages legacy <code>.env</code> bearer tokens.</li>
         <li><strong>Audit</strong> — paginated log of every login, upload, read, download, quarantine/release, public-share access, settings change, and file action, with client IP and User-Agent, pruned after the configured retention (default 30 days). Click a remote IP to open its <code>ipinfo.io</code> lookup in a new tab. Actions received through the CF proxy are labeled <code>via cf-proxy</code> in their summary.</li>
         <li><strong>Dark / light theme</strong> and a collapsible sidebar — toggled from the sidebar, persisted in your browser.</li>
       </ul>
@@ -472,6 +523,71 @@ textarea:focus{outline:none;border-color:var(--accent)}
   </div>
 </div>
 
+<div class="modal-overlay" id="user-modal">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-head">
+      <h3 id="user-modal-title">Create user</h3>
+      <button class="modal-close" onclick="closeUserModal()">Close</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="u-id" value="0">
+      <div class="field">
+        <label>Username</label>
+        <input type="text" id="u-username" autocomplete="off" placeholder="alice">
+      </div>
+      <div class="field" id="u-password-wrap">
+        <label id="u-password-label">Password (min 12 characters)</label>
+        <input type="password" id="u-password" autocomplete="new-password">
+      </div>
+      <div class="field">
+        <label>Storage quota (MB, 0 = unlimited)</label>
+        <input type="number" id="u-quota" min="0" max="1000000" value="0">
+      </div>
+      <div class="field" id="u-disabled-wrap" style="display:none">
+        <label><input type="checkbox" id="u-disabled"> Disabled</label>
+      </div>
+      <button class="btn btn-primary btn-block" style="margin-top:.8rem" onclick="saveUser()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="user-files-modal">
+  <div class="modal" style="max-width:780px">
+    <div class="modal-head">
+      <h3 id="user-files-title">User files</h3>
+      <button class="modal-close" onclick="closeUserFiles()">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="table-scroll">
+        <table class="files-table">
+          <thead><tr><th>Name</th><th>Size</th><th>Modified</th><th>Status</th><th></th></tr></thead>
+          <tbody id="user-files-body"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="user-files-empty" style="display:none">No files.</div>
+      <div class="row-actions" style="margin-top:1rem">
+        <button class="btn btn-danger" onclick="wipeUserStorage()">Wipe all storage</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="secret-modal">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-head">
+      <h3>API token</h3>
+      <button class="modal-close" onclick="closeSecret()">Close</button>
+    </div>
+    <div class="modal-body">
+      <p class="hint" style="margin-bottom:.7rem">Your token is available anytime in the Tokens view, masked by default.</p>
+      <div class="copy-row">
+        <input type="text" id="secret-value" readonly>
+        <button class="icon-btn" onclick="copySecret()">copy</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="confirm-modal">
   <div class="modal" style="max-width:440px">
     <div class="modal-head">
@@ -493,6 +609,11 @@ textarea:focus{outline:none;border-color:var(--accent)}
 <script>
 const csrf = {{.CSRF}};
 const baseURL = "{{.BaseURL}}";
+const role = "{{.Role}}";
+const username = "{{.Username}}";
+const userID = {{.UserID}};
+const defaultView = "{{.DefaultView}}";
+const isSuperadmin = role === "superadmin";
 let allFiles = [];
 
 function toast(msg, err) {
@@ -547,6 +668,14 @@ function legacyCopy(text, done) {
   return Promise.reject(new Error('copy failed'));
 }
 
+function publicURL(name) {
+  let url = baseURL + '/pub?name=' + encodeURIComponent(name);
+  // Superadmin shares live in the legacy root (user_id 0), which is the
+  // default lookup; only regular-user shares carry an owner id.
+  if (role === 'user' && userID > 0) url += '&u=' + userID;
+  return url;
+}
+
 async function loadFiles() {
   try {
     const res = await fetch('/dashboard/api/files');
@@ -566,6 +695,11 @@ async function loadDisk() {
   try {
     const res = await fetch('/dashboard/api/disk');
     const d = await res.json();
+    if (!isSuperadmin) {
+      const quota = d.quota_mb ? fmtSize(d.quota_mb * 1024 * 1024) : 'unlimited';
+      el.textContent = 'storage ' + fmtSize(d.storage_bytes || 0) + ' / ' + quota;
+      return;
+    }
     el.textContent =
       'uploads ' + fmtSize(d.upload_dir_bytes) +
       ' / ' + fmtSize(d.used_bytes) + ' used' +
@@ -590,12 +724,12 @@ function fileRowHTML(f) {
     '<td>' + (f.quarantined ? '<span class="badge badge-q">quarantined</span>' : (f.public ? '<span class="badge badge-public">public</span>' : '<span class="badge badge-ok">ok</span>')) + '</td>' +
     '<td>' + esc(f.uploader_ip || '') + '</td>' +
     '<td><div class="row-actions">' +
-      (f.quarantined
-        ? ''
-        : (f.public
+      (!f.quarantined
+        ? (f.public
             ? '<button class="icon-btn" onclick="copyPublicLink(this)" data-name="' + esc(f.name) + '" title="Copy public link">link</button>' +
               '<button class="icon-btn" onclick="setPublic(this)" data-action="private" data-name="' + esc(f.name) + '">unshare</button>'
-            : '<button class="icon-btn" onclick="setPublic(this)" data-action="public" data-name="' + esc(f.name) + '">share</button>')) +
+            : '<button class="icon-btn" onclick="setPublic(this)" data-action="public" data-name="' + esc(f.name) + '">share</button>')
+        : '') +
       (f.quarantined
         ? '<button class="icon-btn" onclick="setQuarantine(this)" data-action="release" data-name="' + esc(f.name) + '">release</button>'
         : '<button class="icon-btn" onclick="setQuarantine(this)" data-action="quarantine" data-name="' + esc(f.name) + '">quarantine</button>') +
@@ -882,11 +1016,13 @@ async function processQueue() {
 
 const dz = document.getElementById('dropzone');
 const dzInput = document.getElementById('dz-input');
-dz.addEventListener('click', () => dzInput.click());
-dzInput.addEventListener('change', () => { addFiles(dzInput.files); dzInput.value = ''; });
-['dragover', 'dragenter'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('drag'); }));
-['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('drag'); }));
-dz.addEventListener('drop', e => addFiles(e.dataTransfer.files));
+if (dz && dzInput) {
+  dz.addEventListener('click', () => dzInput.click());
+  dzInput.addEventListener('change', () => { addFiles(dzInput.files); dzInput.value = ''; });
+  ['dragover', 'dragenter'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('drag'); }));
+  ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('drag'); }));
+  dz.addEventListener('drop', e => addFiles(e.dataTransfer.files));
+}
 
 async function setQuarantine(btn) {
   const name = btn.dataset.name;
@@ -918,8 +1054,7 @@ async function setPublic(btn) {
     if (res.ok) {
       toast('File ' + verb + 'd');
       if (action === 'public') {
-        const url = baseURL + '/pub?name=' + encodeURIComponent(name);
-        copyText(url, 'Shared. Public link copied');
+        copyText(publicURL(name), 'Shared. Public link copied');
       }
       loadFiles();
     } else {
@@ -933,8 +1068,7 @@ async function setPublic(btn) {
 }
 
 function copyPublicLink(btn) {
-  const url = baseURL + '/pub?name=' + encodeURIComponent(btn.dataset.name);
-  copyText(url, 'Public link copied');
+  copyText(publicURL(btn.dataset.name), 'Public link copied');
 }
 
 let allTokens = [];
@@ -957,12 +1091,21 @@ function renderTokens() {
   empty.style.display = allTokens.length ? 'none' : 'block';
   for (const t of allTokens) {
     const tr = document.createElement('tr');
+    const tokenCell = t.token
+      ? '<div class="copy-row" style="max-width:420px"><input type="password" value="' + esc(t.token) + '" readonly autocomplete="off">' +
+        '<button class="icon-btn" onclick="toggleToken(this)" title="Show token" aria-label="Show token">' +
+        '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>' +
+        '</button><button class="icon-btn" onclick="copyToken(this)">copy</button></div>'
+      : '<span class="mono" style="color:var(--muted)">unavailable — rotate</span>';
+    const action = isSuperadmin
+      ? '<button class="icon-btn" onclick="delToken(this)" data-token-id="' + esc(t.token_id) + '" style="color:var(--danger)">delete</button>'
+      : '<button class="icon-btn" onclick="rotateOwnToken()">rotate</button>';
     tr.innerHTML =
       '<td class="mono">' + esc(t.token_id) + '</td>' +
       '<td>' + esc(t.label || '') + '</td>' +
-      '<td>' + esc(t.expires_at || 'never') + '</td>' +
-      '<td><div class="copy-row" style="max-width:420px"><input type="text" value="' + esc(t.token) + '" readonly><button class="icon-btn" onclick="copyToken(this)">copy</button></div></td>' +
-      '<td><div class="row-actions"><button class="icon-btn" onclick="delToken(this)" data-token-id="' + esc(t.token_id) + '" style="color:var(--danger)">delete</button></div></td>';
+      '<td>' + esc(t.expires_at || (isSuperadmin ? 'never' : '—')) + '</td>' +
+      '<td>' + tokenCell + '</td>' +
+      '<td><div class="row-actions">' + action + '</div></td>';
     body.appendChild(tr);
   }
 }
@@ -970,6 +1113,14 @@ function renderTokens() {
 function copyToken(btn) {
   const input = btn.parentElement.querySelector('input');
   copyText(input.value, 'Token copied');
+}
+
+function toggleToken(btn) {
+  const input = btn.parentElement.querySelector('input');
+  const show = input.type === 'password';
+  input.type = show ? 'text' : 'password';
+  btn.title = show ? 'Hide token' : 'Show token';
+  btn.setAttribute('aria-label', show ? 'Hide token' : 'Show token');
 }
 
 function openTokenCreate() {
@@ -1028,13 +1179,283 @@ async function delToken(btn) {
   }
 }
 
+let allUsers = [];
+let activeUserFiles = null;
+
+function showSecret(token) {
+  document.getElementById('secret-value').value = token;
+  document.getElementById('secret-modal').classList.add('open');
+}
+function closeSecret() {
+  document.getElementById('secret-modal').classList.remove('open');
+}
+function copySecret() {
+  copyText(document.getElementById('secret-value').value, 'Token copied');
+}
+document.getElementById('secret-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeSecret();
+});
+
+async function rotateOwnToken() {
+  const ok = await askConfirm('Rotate your API token? The current token stops working immediately.', {
+    title: 'Rotate token',
+    okText: 'Rotate'
+  });
+  if (!ok) return;
+  try {
+    const res = await fetch('/dashboard/api/user-token/rotate', {
+      method: 'POST',
+      headers: {'X-CSRF-Token': csrf}
+    });
+    if (res.ok) {
+      const d = await res.json();
+      showSecret(d.token);
+      toast('Token rotated');
+      loadTokens();
+    } else {
+      let msg = 'Rotate failed';
+      try { msg = (await res.json()).message || msg; } catch (e) {}
+      toast(msg, true);
+    }
+  } catch (e) {
+    toast('Rotate failed', true);
+  }
+}
+
+async function loadUsers() {
+  try {
+    const res = await fetch('/dashboard/api/users');
+    const data = await res.json();
+    allUsers = data.users || [];
+    renderUsers();
+  } catch (e) {
+    toast('Failed to load users', true);
+  }
+}
+
+function quotaHTML(u) {
+  const used = u.used_bytes || 0;
+  if (!u.quota_mb) return fmtSize(used) + ' / unlimited';
+  const pct = Math.min(100, used / (u.quota_mb * 1024 * 1024) * 100);
+  const cls = pct >= 100 ? 'full' : (pct >= 80 ? 'warn' : '');
+  return fmtSize(used) + ' / ' + fmtSize(u.quota_mb * 1024 * 1024) +
+    '<div class="quota-bar"><div class="quota-bar-fill ' + cls + '" style="width:' + pct.toFixed(1) + '%"></div></div>';
+}
+
+function renderUsers() {
+  const body = document.getElementById('users-body');
+  const empty = document.getElementById('users-empty');
+  body.innerHTML = '';
+  empty.style.display = allUsers.length ? 'none' : 'block';
+  for (const u of allUsers) {
+    const tr = document.createElement('tr');
+    const status = u.disabled
+      ? '<span class="badge badge-q">disabled</span>'
+      : '<span class="badge badge-ok">active</span>';
+    const actions = u.role === 'superadmin'
+      ? '<span class="mono" style="color:var(--muted)">—</span>'
+      : '<div class="row-actions">' +
+          '<button class="icon-btn" onclick="openUserFiles(this)" data-id="' + u.id + '" data-name="' + esc(u.username) + '">files</button>' +
+          '<button class="icon-btn" onclick="openUserEdit(this)" data-id="' + u.id + '">edit</button>' +
+          '<button class="icon-btn" onclick="deleteUser(this)" data-id="' + u.id + '" data-name="' + esc(u.username) + '" style="color:var(--danger)">delete</button>' +
+        '</div>';
+    tr.innerHTML =
+      '<td class="mono">' + esc(u.username) + '</td>' +
+      '<td>' + (u.role === 'superadmin' ? '<span class="badge badge-public">superadmin</span>' : 'user') + '</td>' +
+      '<td>' + quotaHTML(u) + '</td>' +
+      '<td>' + (u.files || 0) + '</td>' +
+      '<td>' + status + '</td>' +
+      '<td>' + (u.last_login_at ? fmtTime(u.last_login_at) : 'never') + '</td>' +
+      '<td>' + actions + '</td>';
+    body.appendChild(tr);
+  }
+}
+
+function openUserCreate() {
+  document.getElementById('user-modal-title').textContent = 'Create user';
+  document.getElementById('u-id').value = '0';
+  document.getElementById('u-username').value = '';
+  document.getElementById('u-username').disabled = false;
+  document.getElementById('u-password').value = '';
+  document.getElementById('u-password-wrap').style.display = '';
+  document.getElementById('u-password-label').textContent = 'Password (min 12 characters)';
+  document.getElementById('u-quota').value = '0';
+  document.getElementById('u-disabled').checked = false;
+  document.getElementById('u-disabled-wrap').style.display = 'none';
+  document.getElementById('user-modal').classList.add('open');
+}
+
+function openUserEdit(btn) {
+  const u = allUsers.find(x => String(x.id) === btn.dataset.id);
+  if (!u) return;
+  document.getElementById('user-modal-title').textContent = 'Edit ' + u.username;
+  document.getElementById('u-id').value = u.id;
+  document.getElementById('u-username').value = u.username;
+  document.getElementById('u-username').disabled = true;
+  document.getElementById('u-password').value = '';
+  document.getElementById('u-password-wrap').style.display = 'none';
+  document.getElementById('u-quota').value = u.quota_mb || 0;
+  document.getElementById('u-disabled').checked = !!u.disabled;
+  document.getElementById('u-disabled-wrap').style.display = '';
+  document.getElementById('user-modal').classList.add('open');
+}
+
+function closeUserModal() {
+  document.getElementById('user-modal').classList.remove('open');
+}
+document.getElementById('user-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeUserModal();
+});
+
+async function saveUser() {
+  const id = parseInt(document.getElementById('u-id').value, 10) || 0;
+  const quota = parseInt(document.getElementById('u-quota').value, 10) || 0;
+  let url, payload;
+  if (id === 0) {
+    url = '/dashboard/api/users/create';
+    payload = {
+      username: document.getElementById('u-username').value.trim(),
+      password: document.getElementById('u-password').value,
+      quota_mb: quota
+    };
+  } else {
+    url = '/dashboard/api/users/update';
+    payload = {id: id, quota_mb: quota, disabled: document.getElementById('u-disabled').checked};
+  }
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      closeUserModal();
+      if (data.token) showSecret(data.token);
+      toast(id === 0 ? 'User created' : 'User updated');
+      loadUsers();
+    } else {
+      toast(data.message || 'Save failed', true);
+    }
+  } catch (e) {
+    toast('Save failed', true);
+  }
+}
+
+async function deleteUser(btn) {
+  const name = btn.dataset.name;
+  const ok = await askConfirm('Delete user ' + name + ' and all of their stored data? This cannot be undone.', {
+    title: 'Delete user',
+    okText: 'Delete user'
+  });
+  if (!ok) return;
+  try {
+    const res = await fetch('/dashboard/api/users/delete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+      body: JSON.stringify({id: parseInt(btn.dataset.id, 10), delete_data: true})
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) { toast('User deleted'); loadUsers(); }
+    else toast(data.message || 'Delete failed', true);
+  } catch (e) {
+    toast('Delete failed', true);
+  }
+}
+
+async function openUserFiles(btn) {
+  activeUserFiles = {id: parseInt(btn.dataset.id, 10), name: btn.dataset.name};
+  document.getElementById('user-files-title').textContent = 'Files — ' + activeUserFiles.name;
+  document.getElementById('user-files-modal').classList.add('open');
+  await loadUserFiles();
+}
+
+function closeUserFiles() {
+  document.getElementById('user-files-modal').classList.remove('open');
+  activeUserFiles = null;
+}
+document.getElementById('user-files-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeUserFiles();
+});
+
+async function loadUserFiles() {
+  if (!activeUserFiles) return;
+  const body = document.getElementById('user-files-body');
+  const empty = document.getElementById('user-files-empty');
+  body.innerHTML = '';
+  try {
+    const res = await fetch('/dashboard/api/users/files?user_id=' + activeUserFiles.id);
+    const data = await res.json();
+    const files = data.files || [];
+    empty.style.display = files.length ? 'none' : 'block';
+    for (const f of files) {
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td class="mono">' + esc(f.name) + '</td>' +
+        '<td>' + fmtSize(f.size) + '</td>' +
+        '<td>' + fmtTime(f.modified) + '</td>' +
+        '<td>' + (f.quarantined ? '<span class="badge badge-q">quarantined</span>' : '<span class="badge badge-ok">ok</span>') + '</td>' +
+        '<td><div class="row-actions"><button class="icon-btn" onclick="deleteUserFile(this)" data-name="' + esc(f.name) + '" style="color:var(--danger)">delete</button></div></td>';
+      body.appendChild(tr);
+    }
+  } catch (e) {
+    toast('Failed to load user files', true);
+  }
+}
+
+async function deleteUserFile(btn) {
+  if (!activeUserFiles) return;
+  const name = btn.dataset.name;
+  const ok = await askConfirm('Delete ' + name + ' from ' + activeUserFiles.name + "'s storage?", {
+    title: 'Delete file',
+    okText: 'Delete'
+  });
+  if (!ok) return;
+  try {
+    const res = await fetch('/dashboard/api/users/delete-file', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+      body: JSON.stringify({user_id: activeUserFiles.id, name: name})
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) { toast('File deleted'); loadUserFiles(); loadUsers(); }
+    else toast(data.message || 'Delete failed', true);
+  } catch (e) {
+    toast('Delete failed', true);
+  }
+}
+
+async function wipeUserStorage() {
+  if (!activeUserFiles) return;
+  const ok = await askConfirm('Wipe all files stored for ' + activeUserFiles.name + '? This cannot be undone.', {
+    title: 'Wipe storage',
+    okText: 'Wipe storage'
+  });
+  if (!ok) return;
+  try {
+    const res = await fetch('/dashboard/api/users/wipe', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+      body: JSON.stringify({user_id: activeUserFiles.id})
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) { toast('Storage wiped'); loadUserFiles(); loadUsers(); }
+    else toast(data.message || 'Wipe failed', true);
+  } catch (e) {
+    toast('Wipe failed', true);
+  }
+}
+
 async function loadSettings() {
   try {
     const res = await fetch('/dashboard/api/settings');
     const s = await res.json();
-    document.getElementById('s-upload_dir').value = s.upload_dir;
-    document.getElementById('s-max_upload_mb').value = s.max_upload_mb;
-    document.getElementById('s-quarantine_extensions').value = (s.quarantine_extensions || []).join(',');
+    const dirEl = document.getElementById('s-upload_dir');
+    if (dirEl) dirEl.value = s.upload_dir || '';
+    const maxEl = document.getElementById('s-max_upload_mb');
+    if (maxEl) maxEl.value = s.max_upload_mb || '';
+    const qEl = document.getElementById('s-quarantine_extensions');
+    if (qEl) qEl.value = (s.quarantine_extensions || []).join(',');
   } catch (e) {
     toast('Failed to load settings', true);
   }
@@ -1042,12 +1463,15 @@ async function loadSettings() {
 
 async function saveSettings() {
   const payload = {
-    upload_dir: document.getElementById('s-upload_dir').value,
-    max_upload_mb: parseInt(document.getElementById('s-max_upload_mb').value, 10),
-    quarantine_extensions: document.getElementById('s-quarantine_extensions').value.split(',').map(s => s.trim()).filter(Boolean),
     current_password: document.getElementById('s-current_password').value,
     admin_password: document.getElementById('s-admin_password').value
   };
+  const dirEl = document.getElementById('s-upload_dir');
+  if (dirEl) {
+    payload.upload_dir = dirEl.value;
+    payload.max_upload_mb = parseInt(document.getElementById('s-max_upload_mb').value, 10) || 0;
+    payload.quarantine_extensions = document.getElementById('s-quarantine_extensions').value.split(',').map(s => s.trim()).filter(Boolean);
+  }
   try {
     const res = await fetch('/dashboard/api/settings', {
       method: 'POST',
@@ -1058,7 +1482,7 @@ async function saveSettings() {
       toast('Settings saved');
       document.getElementById('s-admin_password').value = '';
       document.getElementById('s-current_password').value = '';
-      document.getElementById('meta-dir').textContent = payload.upload_dir;
+      if (payload.upload_dir) document.getElementById('meta-dir').textContent = payload.upload_dir;
       loadSettings();
     } else {
       let msg = 'Save failed';
@@ -1072,17 +1496,15 @@ async function saveSettings() {
 
 function switchView(view) {
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.view === view));
-  document.getElementById('view-files').style.display = view === 'files' ? '' : 'none';
-  document.getElementById('view-exfil').style.display = view === 'exfil' ? '' : 'none';
-  document.getElementById('view-settings').style.display = view === 'settings' ? '' : 'none';
-  document.getElementById('view-audit').style.display = view === 'audit' ? '' : 'none';
-  document.getElementById('view-tokens').style.display = view === 'tokens' ? '' : 'none';
-  document.getElementById('view-docs').style.display = view === 'docs' ? '' : 'none';
+  ['files', 'exfil', 'settings', 'audit', 'tokens', 'docs', 'users'].forEach(v => {
+    const el = document.getElementById('view-' + v);
+    if (el) el.style.display = v === view ? '' : 'none';
+  });
   if (view === 'settings') loadSettings();
-  if (view === 'files') loadFiles();
-  if (view === 'exfil') loadFiles();
+  if (view === 'files' || view === 'exfil') loadFiles();
   if (view === 'audit') loadAudit(1);
   if (view === 'tokens') loadTokens();
+  if (view === 'users') loadUsers();
 }
 
 function logout() {
@@ -1179,7 +1601,11 @@ function toggleSidebar() {
   if (sb && localStorage.getItem('sidebar') === 'collapsed') sb.classList.add('collapsed');
 })();
 
-loadFiles();
+if (defaultView && defaultView !== 'files') {
+  switchView(defaultView);
+} else {
+  loadFiles();
+}
 </script>
 {{end}}
 

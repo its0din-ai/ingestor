@@ -13,8 +13,27 @@ import (
 	"github.com/encrypt0r/ingestor/internal/db"
 	"github.com/encrypt0r/ingestor/internal/diskusage"
 	"github.com/encrypt0r/ingestor/internal/filetype"
+	"github.com/encrypt0r/ingestor/internal/identity"
+	"github.com/encrypt0r/ingestor/internal/users"
 	"github.com/encrypt0r/ingestor/internal/web"
 )
+
+// scope resolves the storage directory for the session user. Superadmins
+// manage the unowned legacy root; their content endpoints are still refused
+// separately.
+func (h *Handler) scope(r *http.Request) (dir string, userID int64, u identity.User, ok bool) {
+	u, ok = identity.FromRequest(r)
+	if !ok {
+		return "", 0, u, false
+	}
+	if u.IsSuperadmin() {
+		return h.cfg.UploadDir(), 0, u, true
+	}
+	if u.IsUser() {
+		return users.UserDir(h.cfg.UploadDir(), u.ID), u.ID, u, true
+	}
+	return "", 0, u, false
+}
 
 type fileInfo struct {
 	Name        string    `json:"name"`
@@ -30,7 +49,12 @@ type fileInfo struct {
 // DiskUsage reports storage consumed by the upload directory plus the
 // filesystem totals, so the dashboard can show a disk monitor.
 func (h *Handler) DiskUsage(w http.ResponseWriter, r *http.Request) {
-	info, err := diskusage.Summary(h.cfg.UploadDir())
+	dir, userID, u, ok := h.scope(r)
+	if !ok {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{Status: "error", Message: "forbidden"})
+		return
+	}
+	info, err := diskusage.Summary(dir)
 	if err != nil {
 		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
 			Status:  "error",
@@ -38,20 +62,38 @@ func (h *Handler) DiskUsage(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	ownBytes, ownFiles, _ := users.Usage(dir)
+	var quotaMB int64
+	if u.IsUser() {
+		if rec, err := users.Get(h.conn, userID); err == nil {
+			quotaMB = rec.QuotaMB
+		}
+	}
 	web.JSON(w, http.StatusOK, map[string]any{
 		"upload_dir_bytes": info.UploadDirBytes,
 		"used_bytes":       info.UsedBytes,
 		"total_bytes":      info.TotalBytes,
 		"free_bytes":       info.FreeBytes,
 		"free_percent":     math.Round(diskusage.FreePercent(info)*10) / 10,
+		"storage_bytes":    ownBytes,
+		"storage_files":    ownFiles,
+		"quota_mb":         quotaMB,
 	})
 }
 
 // ListFiles returns the files currently stored in the upload directory.
 func (h *Handler) ListFiles(w http.ResponseWriter, r *http.Request) {
-	dir := h.cfg.UploadDir()
+	dir, userID, _, ok := h.scope(r)
+	if !ok {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{Status: "error", Message: "forbidden"})
+		return
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			web.JSON(w, http.StatusOK, map[string]any{"files": []fileInfo{}})
+			return
+		}
 		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
 			Status:  "error",
 			Message: "failed to read upload directory",
@@ -73,9 +115,9 @@ func (h *Handler) ListFiles(w http.ResponseWriter, r *http.Request) {
 		if info.Mode()&os.ModeSymlink != 0 {
 			continue
 		}
-		ip, _ := db.UploaderIP(h.conn, e.Name())
+		ip, _ := db.UploaderIP(h.conn, userID, e.Name())
 		readable, _ := filetype.IsText(filepath.Join(dir, e.Name()))
-		src, _ := db.UploadSource(h.conn, e.Name())
+		src, _ := db.UploadSource(h.conn, userID, e.Name())
 		if src == "" {
 			// No record (e.g. a file placed directly on disk): treat it as a
 			// browser/manual upload shown in the Files view.
@@ -88,7 +130,7 @@ func (h *Handler) ListFiles(w http.ResponseWriter, r *http.Request) {
 			Quarantined: strings.HasSuffix(e.Name(), ".quarantined"),
 			UploaderIP:  ip,
 			Readable:    readable,
-			Public:      db.IsPublic(h.conn, e.Name()),
+			Public:      db.IsPublic(h.conn, userID, e.Name()),
 			Source:      src,
 		})
 	}
@@ -100,11 +142,11 @@ func (h *Handler) ListFiles(w http.ResponseWriter, r *http.Request) {
 	web.JSON(w, http.StatusOK, map[string]any{"files": files})
 }
 
-// storedPath validates name as a single path component inside the upload
-// directory, preventing traversal, LFI, and header injection. It returns the
-// resolved path and whether the name was acceptable.
-func (h *Handler) storedPath(name string) (string, bool) {
-	return resolveStoredPath(h.cfg.UploadDir(), name)
+// storedPath validates name as a single path component inside dir, preventing
+// traversal, LFI, and header injection. It returns the resolved path and
+// whether the name was acceptable.
+func (h *Handler) storedPath(dir, name string) (string, bool) {
+	return resolveStoredPath(dir, name)
 }
 
 // resolveStoredPath performs the actual validation so it can be unit tested.
@@ -159,7 +201,12 @@ func headerFilename(name string) string {
 
 // Download serves a stored file.
 func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
-	path, ok := h.storedPath(r.URL.Query().Get("name"))
+	dir, _, _, ok := h.scope(r)
+	if !ok {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{Status: "error", Message: "forbidden"})
+		return
+	}
+	path, ok := h.storedPath(dir, r.URL.Query().Get("name"))
 	if !ok {
 		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
 			Status:  "error",
@@ -186,7 +233,12 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 // directly in the browser. Binary files are rejected; content is always
 // served as text/plain and never rendered as HTML.
 func (h *Handler) Read(w http.ResponseWriter, r *http.Request) {
-	path, ok := h.storedPath(r.URL.Query().Get("name"))
+	dir, _, _, ok := h.scope(r)
+	if !ok {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{Status: "error", Message: "forbidden"})
+		return
+	}
+	path, ok := h.storedPath(dir, r.URL.Query().Get("name"))
 	if !ok {
 		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
 			Status:  "error",
@@ -229,8 +281,13 @@ func (h *Handler) Read(w http.ResponseWriter, r *http.Request) {
 // Quarantine renames a stored file to append the .quarantined suffix so it
 // cannot be executed or served as its original type.
 func (h *Handler) Quarantine(w http.ResponseWriter, r *http.Request) {
+	dir, userID, _, ok := h.scope(r)
+	if !ok {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{Status: "error", Message: "forbidden"})
+		return
+	}
 	name := r.FormValue("name")
-	path, ok := h.storedPath(name)
+	path, ok := h.storedPath(dir, name)
 	if !ok {
 		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
 			Status:  "error",
@@ -269,9 +326,9 @@ func (h *Handler) Quarantine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = db.SetUploadQuarantined(h.conn, name, true)
-	if db.IsPublic(h.conn, name) {
-		_ = db.MarkPrivate(h.conn, name)
+	_ = db.SetUploadQuarantined(h.conn, userID, name, true)
+	if db.IsPublic(h.conn, userID, name) {
+		_ = db.MarkPrivate(h.conn, userID, name)
 	}
 	h.auditLog.Quarantine(r, name)
 
@@ -283,6 +340,11 @@ func (h *Handler) Quarantine(w http.ResponseWriter, r *http.Request) {
 
 // Release removes the .quarantined suffix from a stored file.
 func (h *Handler) Release(w http.ResponseWriter, r *http.Request) {
+	dir, userID, _, ok := h.scope(r)
+	if !ok {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{Status: "error", Message: "forbidden"})
+		return
+	}
 	name := r.FormValue("name")
 	if !strings.HasSuffix(name, ".quarantined") {
 		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
@@ -291,7 +353,7 @@ func (h *Handler) Release(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	path, ok := h.storedPath(name)
+	path, ok := h.storedPath(dir, name)
 	if !ok {
 		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
 			Status:  "error",
@@ -308,7 +370,7 @@ func (h *Handler) Release(w http.ResponseWriter, r *http.Request) {
 	}
 
 	base := strings.TrimSuffix(name, ".quarantined")
-	basePath, ok := h.storedPath(base)
+	basePath, ok := h.storedPath(dir, base)
 	if !ok {
 		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
 			Status:  "error",
@@ -331,7 +393,7 @@ func (h *Handler) Release(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = db.SetUploadQuarantined(h.conn, base, false)
+	_ = db.SetUploadQuarantined(h.conn, userID, base, false)
 	h.auditLog.Release(r, base)
 
 	web.JSON(w, http.StatusOK, web.ErrorResponse{
@@ -353,8 +415,13 @@ func (h *Handler) fileExists(path string) bool {
 
 // MarkPublic registers a stored file for anonymous access via /pub.
 func (h *Handler) MarkPublic(w http.ResponseWriter, r *http.Request) {
+	dir, userID, _, ok := h.scope(r)
+	if !ok {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{Status: "error", Message: "forbidden"})
+		return
+	}
 	name := r.FormValue("name")
-	path, ok := h.storedPath(name)
+	path, ok := h.storedPath(dir, name)
 	if !ok {
 		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
 			Status:  "error",
@@ -377,7 +444,7 @@ func (h *Handler) MarkPublic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := db.MarkPublic(h.conn, name); err != nil {
+	if err := db.MarkPublic(h.conn, userID, name); err != nil {
 		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
 			Status:  "error",
 			Message: "failed to mark file public",
@@ -391,8 +458,13 @@ func (h *Handler) MarkPublic(w http.ResponseWriter, r *http.Request) {
 
 // MarkPrivate revokes anonymous access for a stored file.
 func (h *Handler) MarkPrivate(w http.ResponseWriter, r *http.Request) {
+	dir, userID, _, ok := h.scope(r)
+	if !ok {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{Status: "error", Message: "forbidden"})
+		return
+	}
 	name := r.FormValue("name")
-	path, ok := h.storedPath(name)
+	path, ok := h.storedPath(dir, name)
 	if !ok {
 		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
 			Status:  "error",
@@ -408,7 +480,7 @@ func (h *Handler) MarkPrivate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := db.MarkPrivate(h.conn, name); err != nil {
+	if err := db.MarkPrivate(h.conn, userID, name); err != nil {
 		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
 			Status:  "error",
 			Message: "failed to make file private",
@@ -424,8 +496,26 @@ func (h *Handler) MarkPrivate(w http.ResponseWriter, r *http.Request) {
 // marked public (or quarantined) are indistinguishable from missing files.
 // Every access attempt — successful or denied — is written to the audit log.
 func (h *Handler) PublicFile(w http.ResponseWriter, r *http.Request) {
+	userID := int64(0)
+	if raw := r.URL.Query().Get("u"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id < 1 {
+			h.auditLog.PublicDenied(r, r.URL.Query().Get("name"), "invalid_owner")
+			web.JSON(w, http.StatusNotFound, web.ErrorResponse{
+				Status:  "error",
+				Message: "file not available",
+			})
+			return
+		}
+		userID = id
+	}
+	dir := h.cfg.UploadDir()
+	if userID > 0 {
+		dir = users.UserDir(h.cfg.UploadDir(), userID)
+	}
+
 	requested := r.URL.Query().Get("name")
-	path, ok := h.storedPath(requested)
+	path, ok := h.storedPath(dir, requested)
 	if !ok {
 		h.auditLog.PublicDenied(r, requested, "invalid_name")
 		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
@@ -445,7 +535,7 @@ func (h *Handler) PublicFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := filepath.Base(path)
-	if strings.HasSuffix(name, ".quarantined") || !db.IsPublic(h.conn, name) {
+	if strings.HasSuffix(name, ".quarantined") || !db.IsPublic(h.conn, userID, name) {
 		reason := "not_public"
 		if strings.HasSuffix(name, ".quarantined") {
 			reason = "quarantined"
@@ -473,7 +563,12 @@ func (h *Handler) PublicFile(w http.ResponseWriter, r *http.Request) {
 
 // Delete removes a stored file.
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
-	path, ok := h.storedPath(r.FormValue("name"))
+	dir, _, _, ok := h.scope(r)
+	if !ok {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{Status: "error", Message: "forbidden"})
+		return
+	}
+	path, ok := h.storedPath(dir, r.FormValue("name"))
 	if !ok {
 		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
 			Status:  "error",
@@ -514,7 +609,17 @@ func (h *Handler) ListAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	const perPage = 10
 
-	total, err := db.CountAudit(h.conn)
+	_, userID, u, ok := h.scope(r)
+	if !ok {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{Status: "error", Message: "forbidden"})
+		return
+	}
+	filter := int64(-1)
+	if !u.IsSuperadmin() {
+		filter = userID
+	}
+
+	total, err := db.CountAudit(h.conn, filter)
 	if err != nil {
 		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
 			Status:  "error",
@@ -523,7 +628,7 @@ func (h *Handler) ListAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := db.ListAudit(h.conn, perPage, (page-1)*perPage)
+	rows, err := db.ListAudit(h.conn, filter, perPage, (page-1)*perPage)
 	if err != nil {
 		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
 			Status:  "error",

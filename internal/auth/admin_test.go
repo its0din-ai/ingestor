@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -12,10 +13,20 @@ import (
 	"time"
 
 	"github.com/encrypt0r/ingestor/internal/db"
+	"github.com/encrypt0r/ingestor/internal/users"
 )
 
 func testKey() []byte {
 	return bytes.Repeat([]byte("k"), 64)
+}
+
+func testUserID(t *testing.T, conn *sql.DB) int64 {
+	t.Helper()
+	u, err := users.Create(conn, "tester", "test-password-123", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u.ID
 }
 
 func TestTokenIDLengthAndStability(t *testing.T) {
@@ -35,7 +46,7 @@ func TestTokenIDLengthAndStability(t *testing.T) {
 
 func TestParseTokenRoundTrip(t *testing.T) {
 	m := &Manager{key: testKey(), ttl: time.Hour}
-	token, err := m.signToken("jti-123")
+	token, err := m.signToken("jti-123", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +54,7 @@ func TestParseTokenRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claims.ID != "jti-123" || claims.Subject != "admin" {
+	if claims.ID != "jti-123" || claims.Subject != "1" {
 		t.Fatalf("unexpected claims: %+v", claims)
 	}
 }
@@ -51,7 +62,7 @@ func TestParseTokenRoundTrip(t *testing.T) {
 func TestParseTokenWrongKey(t *testing.T) {
 	a := &Manager{key: bytes.Repeat([]byte("a"), 64), ttl: time.Hour}
 	b := &Manager{key: bytes.Repeat([]byte("b"), 64), ttl: time.Hour}
-	token, err := a.signToken("jti")
+	token, err := a.signToken("jti", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +73,7 @@ func TestParseTokenWrongKey(t *testing.T) {
 
 func TestParseTokenTampered(t *testing.T) {
 	m := &Manager{key: testKey(), ttl: time.Hour}
-	token, err := m.signToken("jti")
+	token, err := m.signToken("jti", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +109,7 @@ func TestParseTokenRejectsNoneAlg(t *testing.T) {
 
 func TestParseTokenExpired(t *testing.T) {
 	m := &Manager{key: testKey(), ttl: -time.Hour}
-	token, err := m.signToken("jti")
+	token, err := m.signToken("jti", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,10 +127,11 @@ func TestSessionAllowlistAndLogoutDestroysToken(t *testing.T) {
 	defer func() { _ = conn.Close() }()
 
 	m := &Manager{conn: conn, key: testKey(), ttl: time.Hour}
+	uid := testUserID(t, conn)
 
 	// Login: issue a session cookie.
 	rec := httptest.NewRecorder()
-	if err := m.StartSession(rec); err != nil {
+	if err := m.StartSession(rec, uid); err != nil {
 		t.Fatal(err)
 	}
 	var session *http.Cookie
@@ -137,27 +149,27 @@ func TestSessionAllowlistAndLogoutDestroysToken(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/", nil)
 	req.AddCookie(session)
-	if !m.validSession(req) {
+	if _, ok := m.sessionUser(req); !ok {
 		t.Fatal("expected valid session after login")
 	}
 
 	// Logout: token must be destroyed even though its signature is valid.
 	logoutRec := httptest.NewRecorder()
 	m.EndSession(req, logoutRec)
-	if m.validSession(req) {
+	if _, ok := m.sessionUser(req); ok {
 		t.Fatal("expected session to be invalid after logout (token destroyed)")
 	}
 
 	// A fresh cookie for a session that was never created must be invalid.
-	if _, err := m.signToken("never-created"); err != nil {
+	if _, err := m.signToken("never-created", 1); err != nil {
 		t.Fatal(err)
 	}
 	req2 := httptest.NewRequest(http.MethodGet, "/dashboard/", nil)
 	req2.AddCookie(&http.Cookie{Name: sessionCookieName, Value: func() string {
-		tok, _ := m.signToken("never-created")
+		tok, _ := m.signToken("never-created", 1)
 		return tok
 	}()})
-	if m.validSession(req2) {
+	if _, ok := m.sessionUser(req2); ok {
 		t.Fatal("expected invalid session for jti not in allowlist")
 	}
 }
@@ -171,17 +183,18 @@ func TestExpiredSessionRowIsInvalid(t *testing.T) {
 	defer func() { _ = conn.Close() }()
 
 	m := &Manager{conn: conn, key: testKey(), ttl: time.Hour}
-	token, err := m.signToken("expired-jti")
+	uid := testUserID(t, conn)
+	token, err := m.signToken("expired-jti", uid)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Insert a session row that is already expired.
-	if err := db.CreateSession(conn, "expired-jti", time.Now().Add(-time.Minute)); err != nil {
+	if err := db.CreateSession(conn, "expired-jti", uid, time.Now().Add(-time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/", nil)
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
-	if m.validSession(req) {
+	if _, ok := m.sessionUser(req); ok {
 		t.Fatal("expected expired session row to be rejected")
 	}
 }

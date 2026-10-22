@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/encrypt0r/ingestor/internal/db"
+	"github.com/encrypt0r/ingestor/internal/identity"
 	"github.com/encrypt0r/ingestor/internal/logging"
 )
 
@@ -14,23 +15,28 @@ import (
 type Action string
 
 const (
-	ActionLoginFailed     Action = "login_failed"
-	ActionLoginSuccess    Action = "login_success"
-	ActionLogout          Action = "logout"
-	ActionBearerFailed    Action = "bearer_failed"
-	ActionUpload          Action = "upload"
-	ActionDownload        Action = "download"
-	ActionRead            Action = "read"
-	ActionDelete          Action = "delete"
-	ActionQuarantine      Action = "quarantine"
-	ActionRelease         Action = "release"
-	ActionMarkPublic      Action = "mark_public"
-	ActionMarkPrivate     Action = "mark_private"
-	ActionPublicOpen      Action = "public_open"
-	ActionPublicDenied    Action = "public_denied"
-	ActionSettingsChanged Action = "settings_changed"
-	ActionPasswordChanged Action = "password_changed"
-	ActionBearerChanged   Action = "bearer_changed"
+	ActionLoginFailed      Action = "login_failed"
+	ActionLoginSuccess     Action = "login_success"
+	ActionLogout           Action = "logout"
+	ActionBearerFailed     Action = "bearer_failed"
+	ActionUpload           Action = "upload"
+	ActionDownload         Action = "download"
+	ActionRead             Action = "read"
+	ActionDelete           Action = "delete"
+	ActionQuarantine       Action = "quarantine"
+	ActionRelease          Action = "release"
+	ActionMarkPublic       Action = "mark_public"
+	ActionMarkPrivate      Action = "mark_private"
+	ActionPublicOpen       Action = "public_open"
+	ActionPublicDenied     Action = "public_denied"
+	ActionSettingsChanged  Action = "settings_changed"
+	ActionPasswordChanged  Action = "password_changed"
+	ActionBearerChanged    Action = "bearer_changed"
+	ActionUserCreated      Action = "user_created"
+	ActionUserUpdated      Action = "user_updated"
+	ActionUserDeleted      Action = "user_deleted"
+	ActionUserDataDeleted  Action = "user_data_deleted"
+	ActionUserTokenRotated Action = "user_token_rotated"
 )
 
 type Logger struct {
@@ -53,14 +59,19 @@ func (l *Logger) record(action Action, summary string, detail map[string]any, r 
 		}
 	}
 	remote, ua := "", ""
+	var userID int64
 	if r != nil {
 		remote = logging.ClientIP(r)
 		ua = r.UserAgent()
+		if u, ok := identity.FromRequest(r); ok {
+			userID = u.ID
+		}
 		if logging.ViaMorphProxy(r) {
 			summary += " via cf-proxy"
 		}
 	}
 	_ = db.InsertAudit(l.conn, db.AuditRecord{
+		UserID:     userID,
 		Action:     string(action),
 		Summary:    summary,
 		Detail:     d,
@@ -70,16 +81,16 @@ func (l *Logger) record(action Action, summary string, detail map[string]any, r 
 	})
 }
 
-func (l *Logger) LoginFailed(r *http.Request) {
-	l.record(ActionLoginFailed, "failed admin login attempt", nil, r)
+func (l *Logger) LoginFailed(r *http.Request, username string) {
+	l.record(ActionLoginFailed, "failed login attempt", map[string]any{"username": username}, r)
 }
 
-func (l *Logger) LoginSuccess(r *http.Request) {
-	l.record(ActionLoginSuccess, "admin logged in", nil, r)
+func (l *Logger) LoginSuccess(r *http.Request, username string) {
+	l.record(ActionLoginSuccess, "user logged in: "+username, nil, r)
 }
 
 func (l *Logger) Logout(r *http.Request) {
-	l.record(ActionLogout, "admin logged out", nil, r)
+	l.record(ActionLogout, "user logged out", nil, r)
 }
 
 func (l *Logger) BearerFailed(r *http.Request, path string) {
@@ -153,9 +164,29 @@ func (l *Logger) SettingsChanged(r *http.Request, fields []string) {
 }
 
 func (l *Logger) PasswordChanged(r *http.Request) {
-	l.record(ActionPasswordChanged, "admin password changed", nil, r)
+	l.record(ActionPasswordChanged, "password changed", nil, r)
 }
 
 func (l *Logger) BearerChanged(r *http.Request) {
 	l.record(ActionBearerChanged, "bearer token changed", nil, r)
+}
+
+func (l *Logger) UserCreated(r *http.Request, username string, quotaMB int64) {
+	l.record(ActionUserCreated, "user created: "+username, map[string]any{"username": username, "quota_mb": quotaMB}, r)
+}
+
+func (l *Logger) UserUpdated(r *http.Request, username string, fields []string) {
+	l.record(ActionUserUpdated, "user updated: "+username, map[string]any{"username": username, "fields": fields}, r)
+}
+
+func (l *Logger) UserDeleted(r *http.Request, username string, dataDeleted bool) {
+	l.record(ActionUserDeleted, "user deleted: "+username, map[string]any{"username": username, "data_deleted": dataDeleted}, r)
+}
+
+func (l *Logger) UserDataDeleted(r *http.Request, username string) {
+	l.record(ActionUserDataDeleted, "user storage wiped: "+username, map[string]any{"username": username}, r)
+}
+
+func (l *Logger) UserTokenRotated(r *http.Request, username string) {
+	l.record(ActionUserTokenRotated, "user token rotated: "+username, map[string]any{"username": username}, r)
 }

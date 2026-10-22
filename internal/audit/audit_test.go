@@ -24,7 +24,7 @@ func TestUploadSummaryPrefersLabel(t *testing.T) {
 	// With a label: prefer the label.
 	l.Upload(req, "r.txt", "r_abc.txt", 10, false, "a3f9c2", "alice")
 
-	rows, err := db.ListAudit(conn, 10, 0)
+	rows, err := db.ListAudit(conn, -1, 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestUploadSummaryViaCfProxy(t *testing.T) {
 	req.Header.Set("X-Morph-Real-Ip", "198.51.100.44")
 	l.Upload(req, "data.txt", "data_abc.txt", 10, false, "a3f9c2", "production")
 
-	rows, err := db.ListAudit(conn, 10, 0)
+	rows, err := db.ListAudit(conn, -1, 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

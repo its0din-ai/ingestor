@@ -46,7 +46,9 @@ func TestLimiterWindowExpires(t *testing.T) {
 
 func TestLimiterStalePruning(t *testing.T) {
 	l := New(2, 30*time.Millisecond)
-	if !l.Allow("k") || !l.Allow("k") {
+	first := l.Allow("k")
+	second := l.Allow("k")
+	if !first || !second {
 		t.Fatal("expected allowed")
 	}
 	time.Sleep(40 * time.Millisecond)

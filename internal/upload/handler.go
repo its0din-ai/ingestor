@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -19,8 +20,10 @@ import (
 	"github.com/encrypt0r/ingestor/internal/auth"
 	"github.com/encrypt0r/ingestor/internal/config"
 	"github.com/encrypt0r/ingestor/internal/db"
+	"github.com/encrypt0r/ingestor/internal/identity"
 	"github.com/encrypt0r/ingestor/internal/logging"
 	"github.com/encrypt0r/ingestor/internal/quarantine"
+	"github.com/encrypt0r/ingestor/internal/users"
 	"github.com/encrypt0r/ingestor/internal/web"
 )
 
@@ -38,8 +41,47 @@ type Handler struct {
 	auditLog *audit.Logger
 }
 
+// owner describes where an upload is stored and how much space it may use.
+type owner struct {
+	userID  int64
+	dir     string
+	quotaMB int64
+}
+
+var (
+	errNoIdentity = errors.New("no authenticated owner")
+	errNoStorage  = errors.New("account has no storage")
+)
+
 func New(cfg *config.Config, conn *sql.DB, auditLog *audit.Logger) *Handler {
 	return &Handler{cfg: cfg, conn: conn, auditLog: auditLog}
+}
+
+// ownerFor resolves the storage root for the authenticated principal. Legacy
+// bearer tokens (identity role "legacy") write to the unowned upload root.
+func (h *Handler) ownerFor(r *http.Request) (owner, error) {
+	u, ok := identity.FromRequest(r)
+	if !ok {
+		return owner{}, errNoIdentity
+	}
+	if u.Role == identity.RoleLegacy || u.IsSuperadmin() {
+		// The superadmin keeps the original upload root as personal storage,
+		// preserving the pre-multi-user behavior. Regular users are isolated
+		// under upload_dir/users/<id>.
+		return owner{userID: 0, dir: h.cfg.UploadDir()}, nil
+	}
+	if !u.IsUser() {
+		return owner{}, errNoStorage
+	}
+	rec, err := users.Get(h.conn, u.ID)
+	if err != nil || rec.Disabled {
+		return owner{}, errNoStorage
+	}
+	return owner{
+		userID:  rec.ID,
+		dir:     users.UserDir(h.cfg.UploadDir(), rec.ID),
+		quotaMB: rec.QuotaMB,
+	}, nil
 }
 
 // ServeHTTP is the catch-all: non-upload methods are logged and acked;
@@ -57,17 +99,33 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
+	o, err := h.ownerFor(r)
+	if err != nil {
+		h.ownerFail(w, err)
+		return
+	}
 	maxBytes := h.cfg.MaxUploadBytes()
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
-		h.handleMultipart(w, r, maxBytes)
+		h.handleMultipart(w, r, maxBytes, o)
 		return
 	}
-	h.handleRaw(w, r, maxBytes)
+	h.handleRaw(w, r, maxBytes, o)
 }
 
-func (h *Handler) handleMultipart(w http.ResponseWriter, r *http.Request, maxBytes int64) {
+func (h *Handler) ownerFail(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errNoIdentity):
+		h.fail(w, http.StatusUnauthorized, "unauthorized")
+	case errors.Is(err, errNoStorage):
+		h.fail(w, http.StatusForbidden, "this account has no storage")
+	default:
+		h.fail(w, http.StatusInternalServerError, "failed to resolve storage")
+	}
+}
+
+func (h *Handler) handleMultipart(w http.ResponseWriter, r *http.Request, maxBytes int64, o owner) {
 	reader, err := r.MultipartReader()
 	if err != nil {
 		h.fail(w, http.StatusBadRequest, "invalid multipart request")
@@ -86,7 +144,7 @@ func (h *Handler) handleMultipart(w http.ResponseWriter, r *http.Request, maxByt
 		if part.FileName() == "" {
 			continue
 		}
-		h.save(w, r, part, sanitizeName(part.FileName()), maxBytes, false, "api")
+		h.save(w, r, part, sanitizeName(part.FileName()), maxBytes, false, "api", o)
 		_ = part.Close()
 		return
 	}
@@ -94,12 +152,12 @@ func (h *Handler) handleMultipart(w http.ResponseWriter, r *http.Request, maxByt
 	h.fail(w, http.StatusBadRequest, "no file part found")
 }
 
-func (h *Handler) handleRaw(w http.ResponseWriter, r *http.Request, maxBytes int64) {
+func (h *Handler) handleRaw(w http.ResponseWriter, r *http.Request, maxBytes int64, o owner) {
 	name := sanitizeName(rawFilename(r))
 	if name == "" {
 		name = "upload-" + strconv.FormatInt(time.Now().Unix(), 10)
 	}
-	h.save(w, r, r.Body, name, maxBytes, false, "api")
+	h.save(w, r, r.Body, name, maxBytes, false, "api", o)
 }
 
 // UploadBrowser stores a multipart file using its original name (no random
@@ -107,6 +165,11 @@ func (h *Handler) handleRaw(w http.ResponseWriter, r *http.Request, maxBytes int
 // a file with the same name already exists the upload is refused so nothing
 // is silently overwritten.
 func (h *Handler) UploadBrowser(w http.ResponseWriter, r *http.Request) {
+	o, err := h.ownerFor(r)
+	if err != nil {
+		h.ownerFail(w, err)
+		return
+	}
 	maxBytes := h.cfg.MaxUploadBytes()
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 
@@ -128,7 +191,7 @@ func (h *Handler) UploadBrowser(w http.ResponseWriter, r *http.Request) {
 		if part.FileName() == "" {
 			continue
 		}
-		h.save(w, r, part, sanitizeName(part.FileName()), maxBytes, true, "browser")
+		h.save(w, r, part, sanitizeName(part.FileName()), maxBytes, true, "browser", o)
 		_ = part.Close()
 		return
 	}
@@ -154,8 +217,8 @@ func rawFilename(r *http.Request) string {
 // a random suffix is appended so concurrent arbitrary uploads never collide.
 // source records how the file arrived ("api" for the token endpoint,
 // "browser" for the dashboard upload) so the Files view can be split.
-func (h *Handler) save(w http.ResponseWriter, r *http.Request, src io.Reader, name string, maxBytes int64, keepName bool, source string) {
-	dir := h.cfg.UploadDir()
+func (h *Handler) save(w http.ResponseWriter, r *http.Request, src io.Reader, name string, maxBytes int64, keepName bool, source string, o owner) {
+	dir := o.dir
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		h.fail(w, http.StatusInternalServerError, "failed to prepare upload directory")
 		return
@@ -179,6 +242,21 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request, src io.Reader, na
 		_ = tmp.Close()
 		h.fail(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("file exceeds maximum upload size of %d MB", h.cfg.MaxUploadMB()))
 		return
+	}
+	if o.quotaMB > 0 {
+		used, _, err := users.Usage(dir)
+		if err != nil {
+			_ = tmp.Close()
+			h.fail(w, http.StatusInternalServerError, "failed to read storage usage")
+			return
+		}
+		quotaBytes := o.quotaMB * 1024 * 1024
+		if used+written > quotaBytes {
+			_ = tmp.Close()
+			h.fail(w, http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("storage quota exceeded: %d of %d MB used", used/(1024*1024), o.quotaMB))
+			return
+		}
 	}
 	if err := tmp.Close(); err != nil {
 		h.fail(w, http.StatusInternalServerError, "failed to finalize file")
@@ -233,6 +311,7 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request, src io.Reader, na
 	}
 
 	if err := db.InsertUpload(h.conn, db.UploadRecord{
+		UserID:       o.userID,
 		OriginalName: name,
 		StoredName:   finalName,
 		FileSize:     written,

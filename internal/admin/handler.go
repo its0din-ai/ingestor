@@ -3,6 +3,7 @@ package admin
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -13,8 +14,11 @@ import (
 	"github.com/encrypt0r/ingestor/internal/auth"
 	"github.com/encrypt0r/ingestor/internal/config"
 	"github.com/encrypt0r/ingestor/internal/db"
+	"github.com/encrypt0r/ingestor/internal/identity"
 	"github.com/encrypt0r/ingestor/internal/logging"
 	"github.com/encrypt0r/ingestor/internal/ratelimit"
+	"github.com/encrypt0r/ingestor/internal/users"
+	"github.com/encrypt0r/ingestor/internal/version"
 	"github.com/encrypt0r/ingestor/internal/web"
 )
 
@@ -50,26 +54,28 @@ func (h *Handler) LoginForm(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	remote := logging.ClientIP(r)
+	username := strings.TrimSpace(r.FormValue("username"))
 	if !h.loginLimiter.Allow(remote) {
-		h.auditLog.LoginFailed(r)
+		h.auditLog.LoginFailed(r, username)
 		web.JSON(w, http.StatusTooManyRequests, web.ErrorResponse{
 			Status:  "error",
 			Message: "too many login attempts, try again later",
 		})
 		return
 	}
-	password := r.FormValue("password")
-	if !h.cfg.VerifyAdminPassword(password) {
-		h.auditLog.LoginFailed(r)
+	u, err := users.Authenticate(h.conn, username, r.FormValue("password"))
+	if err != nil {
+		h.auditLog.LoginFailed(r, username)
 		csrf := auth.CSRFToken(r)
-		h.render(w, r, "login", csrf, nil, "invalid password")
+		h.render(w, r, "login", csrf, nil, "invalid username or password")
 		return
 	}
-	if err := h.sessions.StartSession(w); err != nil {
+	if err := h.sessions.StartSession(w, u.ID); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	h.auditLog.LoginSuccess(r)
+	ctx := identity.WithUser(r.Context(), u)
+	h.auditLog.LoginSuccess(r.WithContext(ctx), u.Username)
 	http.Redirect(w, r, "/dashboard/", http.StatusSeeOther)
 }
 
@@ -81,7 +87,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	csrf := auth.CSRFToken(r)
-	history, _ := db.ListUploads(h.conn, 100, 0)
+	history, _ := db.ListUploads(h.conn, -1, 100, 0)
 	h.render(w, r, "dashboard", csrf, history, "")
 }
 
@@ -93,6 +99,13 @@ type dashboardData struct {
 	BaseURL     string
 	History     []db.UploadRecord
 	Error       string
+	Role        string
+	Username    string
+	UserID      int64
+	Version     string
+	QuotaMB     int64
+	UsedBytes   int64
+	DefaultView string
 }
 
 type bearerTokenData struct {
@@ -103,6 +116,10 @@ type bearerTokenData struct {
 }
 
 type settingsData struct {
+	Username             string            `json:"username"`
+	Role                 string            `json:"role"`
+	QuotaMB              int64             `json:"quota_mb"`
+	UsedBytes            int64             `json:"used_bytes"`
 	UploadDir            string            `json:"upload_dir"`
 	MaxUploadMB          int64             `json:"max_upload_mb"`
 	QuarantineExtensions []string          `json:"quarantine_extensions"`
@@ -112,24 +129,38 @@ type settingsData struct {
 // SettingsJSON returns the current non-secret settings plus the bearer
 // tokens (for the admin's own reference in the UI).
 func (h *Handler) SettingsJSON(w http.ResponseWriter, r *http.Request) {
+	u, _ := identity.FromRequest(r)
+	data := settingsData{
+		Username:  u.Username,
+		Role:      u.Role,
+		QuotaMB:   0,
+		UsedBytes: 0,
+	}
+	if u.IsUser() {
+		if rec, err := users.Get(h.conn, u.ID); err == nil {
+			data.QuotaMB = rec.QuotaMB
+		}
+		data.UsedBytes, _, _ = users.Usage(users.UserDir(h.cfg.UploadDir(), u.ID))
+		web.JSON(w, http.StatusOK, data)
+		return
+	}
+
 	tokens := make([]bearerTokenData, 0, len(h.cfg.BearerTokens()))
 	for _, t := range h.cfg.BearerTokens() {
-		data := bearerTokenData{
+		tok := bearerTokenData{
 			Label:   t.Label,
 			Token:   t.Token,
 			TokenID: auth.TokenID(t.Token),
 		}
 		if !t.ExpiresAt.IsZero() {
-			data.ExpiresAt = t.ExpiresAt.UTC().Format(time.RFC3339)
+			tok.ExpiresAt = t.ExpiresAt.UTC().Format(time.RFC3339)
 		}
-		tokens = append(tokens, data)
+		tokens = append(tokens, tok)
 	}
-	data := settingsData{
-		UploadDir:            h.cfg.UploadDirRelative(),
-		MaxUploadMB:          h.cfg.MaxUploadMB(),
-		QuarantineExtensions: h.cfg.QuarantineExtensions(),
-		BearerTokens:         tokens,
-	}
+	data.UploadDir = h.cfg.UploadDirRelative()
+	data.MaxUploadMB = h.cfg.MaxUploadMB()
+	data.QuarantineExtensions = h.cfg.QuarantineExtensions()
+	data.BearerTokens = tokens
 	web.JSON(w, http.StatusOK, data)
 }
 
@@ -150,10 +181,27 @@ func (h *Handler) SaveSettingsJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	u, _ := identity.FromRequest(r)
+	globalChange := req.UploadDir != "" || req.MaxUploadMB > 0 || req.QuarantineExtensions != nil || req.BearerTokens != nil
+	if globalChange && !u.IsSuperadmin() {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{
+			Status:  "error",
+			Message: "only the superadmin can change global settings",
+		})
+		return
+	}
+
 	var changed []string
 
 	if req.UploadDir != "" {
 		if err := h.cfg.SetUploadDir(req.UploadDir); err != nil {
+			if errors.Is(err, config.ErrInvalidUploadDir) {
+				web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+					Status:  "error",
+					Message: err.Error(),
+				})
+				return
+			}
 			h.settingsErr(w, err)
 			return
 		}
@@ -201,21 +249,28 @@ func (h *Handler) SaveSettingsJSON(w http.ResponseWriter, r *http.Request) {
 		h.auditLog.BearerChanged(r)
 	}
 	if req.AdminPassword != "" {
-		if !h.cfg.VerifyAdminPassword(req.CurrentPassword) {
+		if _, err := users.Authenticate(h.conn, u.Username, req.CurrentPassword); err != nil {
 			web.JSON(w, http.StatusUnauthorized, web.ErrorResponse{
 				Status:  "error",
 				Message: "current password is incorrect",
 			})
 			return
 		}
-		if err := h.cfg.SetAdminPassword(req.AdminPassword); err != nil {
+		if err := users.SetPassword(h.conn, u.ID, req.AdminPassword); err != nil {
+			if errors.Is(err, users.ErrWeakPassword) {
+				web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+					Status:  "error",
+					Message: err.Error(),
+				})
+				return
+			}
 			h.settingsErr(w, err)
 			return
 		}
-		changed = append(changed, "admin_password")
+		changed = append(changed, "password")
 		h.auditLog.PasswordChanged(r)
-		// Force every active session to re-authenticate.
-		if err := db.DeleteAllSessions(h.conn); err != nil {
+		// Force this account's active sessions to re-authenticate.
+		if err := users.DeleteSessionsForUser(h.conn, u.ID); err != nil {
 			slog.Warn("failed to invalidate sessions after password change", "err", err)
 		}
 	}
@@ -228,6 +283,14 @@ func (h *Handler) SaveSettingsJSON(w http.ResponseWriter, r *http.Request) {
 		Status:  "ok",
 		Message: "Settings saved",
 	})
+}
+
+// tokenSecret returns the key used to encrypt user API tokens at rest. Startup
+// already validated it (config.Load), so an empty value cannot occur in a
+// running server.
+func (h *Handler) tokenSecret() []byte {
+	secret, _ := h.cfg.JWTSecret()
+	return secret
 }
 
 func (h *Handler) settingsErr(w http.ResponseWriter, err error) {
@@ -246,6 +309,24 @@ func (h *Handler) render(w http.ResponseWriter, r *http.Request, view string, cs
 		BaseURL:     baseURL(r),
 		History:     history,
 		Error:       errMsg,
+		Version:     version.Version,
+		DefaultView: "files",
+	}
+	if u, ok := identity.FromRequest(r); ok {
+		data.Role = u.Role
+		data.Username = u.Username
+		data.UserID = u.ID
+		if u.IsSuperadmin() {
+			data.DefaultView = "users"
+		}
+		if u.IsUser() {
+			dir := users.UserDir(h.cfg.UploadDir(), u.ID)
+			data.UploadDir = dir
+			data.UsedBytes, _, _ = users.Usage(dir)
+			if rec, err := users.Get(h.conn, u.ID); err == nil {
+				data.QuotaMB = rec.QuotaMB
+			}
+		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = h.tmpl.Execute(w, data)

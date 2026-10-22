@@ -9,12 +9,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/encrypt0r/ingestor/internal/config"
 	"github.com/encrypt0r/ingestor/internal/db"
+	"github.com/encrypt0r/ingestor/internal/identity"
+	"github.com/encrypt0r/ingestor/internal/users"
 	"github.com/encrypt0r/ingestor/internal/web"
 )
 
@@ -60,7 +63,8 @@ func NewManager(cfg *config.Config, conn *sql.DB) (*Manager, error) {
 func (m *Manager) Admin() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !m.validSession(r) {
+			u, ok := m.sessionUser(r)
+			if !ok {
 				http.Redirect(w, r, "/login", http.StatusSeeOther)
 				return
 			}
@@ -73,8 +77,27 @@ func (m *Manager) Admin() func(http.Handler) http.Handler {
 				})
 				return
 			}
-			r = r.WithContext(context.WithValue(r.Context(), csrfKey, csrf))
+			ctx := context.WithValue(r.Context(), csrfKey, csrf)
+			ctx = identity.WithUser(ctx, u)
 
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// Superadmin guards routes that only the superadmin may call. It must be
+// nested inside Admin, which resolves and stores the session user.
+func (m *Manager) Superadmin() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			u, ok := identity.FromRequest(r)
+			if !ok || !u.IsSuperadmin() {
+				web.JSON(w, http.StatusForbidden, web.ErrorResponse{
+					Status:  "error",
+					Message: "superadmin access required",
+				})
+				return
+			}
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -84,7 +107,7 @@ func (m *Manager) Admin() func(http.Handler) http.Handler {
 // dashboard.
 func (m *Manager) Root() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if m.validSession(r) {
+		if _, ok := m.sessionUser(r); ok {
 			http.Redirect(w, r, "/dashboard/", http.StatusSeeOther)
 			return
 		}
@@ -111,36 +134,41 @@ func (m *Manager) Public() func(http.Handler) http.Handler {
 	}
 }
 
-func (m *Manager) validSession(r *http.Request) bool {
+// sessionUser resolves the session cookie to an active user. The jti must
+// still be present in the sessions allowlist, so logout and disabled accounts
+// invalidate the token even though its signature remains valid.
+func (m *Manager) sessionUser(r *http.Request) (identity.User, bool) {
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil {
-		return false
+		return identity.User{}, false
 	}
 	claims, err := m.parseToken(cookie.Value)
 	if err != nil {
-		return false
+		return identity.User{}, false
 	}
-	// The jti must still be present in the sessions allowlist; a deleted row
-	// (logout) invalidates the token even though its signature is valid.
-	expiresAt, err := db.SessionExpiry(m.conn, claims.ID)
+	expiresAt, userID, err := db.SessionUser(m.conn, claims.ID)
 	if err != nil {
-		return false
+		return identity.User{}, false
 	}
 	if time.Now().After(expiresAt) {
 		_ = db.DeleteSession(m.conn, claims.ID)
-		return false
+		return identity.User{}, false
 	}
-	return true
+	u, err := users.Get(m.conn, userID)
+	if err != nil || u.Disabled {
+		return identity.User{}, false
+	}
+	return identity.User{ID: u.ID, Username: u.Username, Role: u.Role}, true
 }
 
 // StartSession creates a session row and sets the signed JWT session cookie.
-func (m *Manager) StartSession(w http.ResponseWriter) error {
+func (m *Manager) StartSession(w http.ResponseWriter, userID int64) error {
 	jti := newToken()
 	expiresAt := time.Now().Add(m.ttl)
-	if err := db.CreateSession(m.conn, jti, expiresAt); err != nil {
+	if err := db.CreateSession(m.conn, jti, userID, expiresAt); err != nil {
 		return err
 	}
-	token, err := m.signToken(jti)
+	token, err := m.signToken(jti, userID)
 	if err != nil {
 		_ = db.DeleteSession(m.conn, jti)
 		return err
@@ -176,10 +204,10 @@ func (m *Manager) EndSession(r *http.Request, w http.ResponseWriter) {
 	})
 }
 
-func (m *Manager) signToken(jti string) (string, error) {
+func (m *Manager) signToken(jti string, userID int64) (string, error) {
 	now := time.Now()
 	claims := jwt.RegisteredClaims{
-		Subject:   "admin",
+		Subject:   strconv.FormatInt(userID, 10),
 		ID:        jti,
 		IssuedAt:  jwt.NewNumericDate(now),
 		ExpiresAt: jwt.NewNumericDate(now.Add(m.ttl)),
@@ -204,7 +232,7 @@ func (m *Manager) parseToken(raw string) (*jwt.RegisteredClaims, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !token.Valid || claims.ID == "" || claims.Subject != "admin" {
+	if !token.Valid || claims.ID == "" || claims.Subject == "" {
 		return nil, errors.New("invalid token claims")
 	}
 	return claims, nil
@@ -273,8 +301,9 @@ func TokenID(token string) string {
 // BearerIdentity is the fingerprint and optional label of the token that
 // authenticated an upload request.
 type BearerIdentity struct {
-	ID    string
-	Label string
+	ID     string
+	Label  string
+	UserID int64
 }
 
 // BearerIdentityFromContext returns the token identity for a request, if any.

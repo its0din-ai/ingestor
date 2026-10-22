@@ -40,6 +40,24 @@ var migrations = []string{
 		stored_name TEXT PRIMARY KEY,
 		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);`,
+	`CREATE TABLE IF NOT EXISTS users (
+		id            INTEGER PRIMARY KEY AUTOINCREMENT,
+		username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
+		password_hash TEXT NOT NULL,
+		role          TEXT NOT NULL DEFAULT 'user',
+		quota_mb      INTEGER NOT NULL DEFAULT 0,
+		disabled      INTEGER NOT NULL DEFAULT 0,
+		created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		last_login_at DATETIME
+	);`,
+	`CREATE TABLE IF NOT EXISTS user_tokens (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id    INTEGER NOT NULL,
+		token_hash TEXT NOT NULL UNIQUE,
+		token_enc  TEXT NOT NULL DEFAULT '',
+		label      TEXT NOT NULL DEFAULT '',
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);`,
 }
 
 func Open(path string) (*sql.DB, error) {
@@ -80,7 +98,80 @@ func migrate(conn *sql.DB) error {
 	if err := migrateAuditUserAgent(conn); err != nil {
 		return err
 	}
-	return migrateUploadSource(conn)
+	if err := migrateUploadSource(conn); err != nil {
+		return err
+	}
+	for _, table := range []string{"sessions", "upload_history", "audit_log"} {
+		if err := migrateColumn(conn, table, "user_id", `INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	if err := migrateColumn(conn, "user_tokens", "token_enc", `TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := migratePublicFiles(conn); err != nil {
+		return err
+	}
+	for _, stmt := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_uploads_user ON upload_history(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_tokens_user ON user_tokens(user_id)`,
+	} {
+		if _, err := conn.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// migrateColumn adds column with the given definition when the table does not
+// already have it.
+func migrateColumn(conn *sql.DB, table, column, definition string) error {
+	exists, err := columnExists(conn, table, column)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	_, err = conn.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + definition)
+	return err
+}
+
+// migratePublicFiles scopes public shares by owner. SQLite cannot change a
+// primary key in place, so the table is rebuilt with (user_id, stored_name).
+func migratePublicFiles(conn *sql.DB) error {
+	exists, err := columnExists(conn, "public_files", "user_id")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, stmt := range []string{
+		`CREATE TABLE public_files_new (
+			user_id     INTEGER NOT NULL DEFAULT 0,
+			stored_name TEXT NOT NULL,
+			created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (user_id, stored_name)
+		)`,
+		`INSERT OR IGNORE INTO public_files_new (user_id, stored_name, created_at)
+			SELECT 0, stored_name, created_at FROM public_files`,
+		`DROP TABLE public_files`,
+		`ALTER TABLE public_files_new RENAME TO public_files`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // columnExists reports whether table has column.
@@ -181,8 +272,8 @@ func migrateStoredName(conn *sql.DB) error {
 	return nil
 }
 
-func CreateSession(conn *sql.DB, id string, expiresAt time.Time) error {
-	_, err := conn.Exec(`INSERT INTO sessions (id, expires_at) VALUES (?, ?)`, id, expiresAt)
+func CreateSession(conn *sql.DB, id string, userID int64, expiresAt time.Time) error {
+	_, err := conn.Exec(`INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)`, id, userID, expiresAt)
 	return err
 }
 
@@ -190,6 +281,16 @@ func SessionExpiry(conn *sql.DB, id string) (time.Time, error) {
 	var expiresAt time.Time
 	err := conn.QueryRow(`SELECT expires_at FROM sessions WHERE id = ?`, id).Scan(&expiresAt)
 	return expiresAt, err
+}
+
+// SessionUser returns the expiry and owner of a session row.
+func SessionUser(conn *sql.DB, id string) (time.Time, int64, error) {
+	var (
+		expiresAt time.Time
+		userID    int64
+	)
+	err := conn.QueryRow(`SELECT expires_at, user_id FROM sessions WHERE id = ?`, id).Scan(&expiresAt, &userID)
+	return expiresAt, userID, err
 }
 
 func DeleteSession(conn *sql.DB, id string) error {
@@ -217,25 +318,26 @@ func DeleteAuditOlderThan(conn *sql.DB, cutoff time.Time) error {
 }
 
 // MarkPublic registers a stored file as publicly shareable via /pub.
-func MarkPublic(conn *sql.DB, storedName string) error {
-	_, err := conn.Exec(`INSERT OR IGNORE INTO public_files (stored_name) VALUES (?)`, storedName)
+func MarkPublic(conn *sql.DB, userID int64, storedName string) error {
+	_, err := conn.Exec(`INSERT OR IGNORE INTO public_files (user_id, stored_name) VALUES (?, ?)`, userID, storedName)
 	return err
 }
 
 // MarkPrivate revokes public access for a stored file.
-func MarkPrivate(conn *sql.DB, storedName string) error {
-	_, err := conn.Exec(`DELETE FROM public_files WHERE stored_name = ?`, storedName)
+func MarkPrivate(conn *sql.DB, userID int64, storedName string) error {
+	_, err := conn.Exec(`DELETE FROM public_files WHERE user_id = ? AND stored_name = ?`, userID, storedName)
 	return err
 }
 
 // IsPublic reports whether a stored file is marked publicly shareable.
-func IsPublic(conn *sql.DB, storedName string) bool {
+func IsPublic(conn *sql.DB, userID int64, storedName string) bool {
 	var n int
-	err := conn.QueryRow(`SELECT COUNT(*) FROM public_files WHERE stored_name = ?`, storedName).Scan(&n)
+	err := conn.QueryRow(`SELECT COUNT(*) FROM public_files WHERE user_id = ? AND stored_name = ?`, userID, storedName).Scan(&n)
 	return err == nil && n > 0
 }
 
 type UploadRecord struct {
+	UserID       int64
 	OriginalName string
 	StoredName   string
 	FileSize     int64
@@ -247,19 +349,19 @@ type UploadRecord struct {
 
 func InsertUpload(conn *sql.DB, r UploadRecord) error {
 	_, err := conn.Exec(
-		`INSERT INTO upload_history (original_name, stored_name, file_size, quarantined, remote_addr, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		r.OriginalName, r.StoredName, r.FileSize, r.Quarantined, r.RemoteAddr, r.Source, r.CreatedAt,
+		`INSERT INTO upload_history (user_id, original_name, stored_name, file_size, quarantined, remote_addr, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.UserID, r.OriginalName, r.StoredName, r.FileSize, r.Quarantined, r.RemoteAddr, r.Source, r.CreatedAt,
 	)
 	return err
 }
 
 // UploaderIP returns the remote address that uploaded the file stored under
 // storedName, or "" if no matching record exists.
-func UploaderIP(conn *sql.DB, storedName string) (string, error) {
+func UploaderIP(conn *sql.DB, userID int64, storedName string) (string, error) {
 	var ip string
 	err := conn.QueryRow(
-		`SELECT remote_addr FROM upload_history WHERE stored_name = ? ORDER BY id DESC LIMIT 1`,
-		storedName,
+		`SELECT remote_addr FROM upload_history WHERE user_id = ? AND stored_name = ? ORDER BY id DESC LIMIT 1`,
+		userID, storedName,
 	).Scan(&ip)
 	if err == sql.ErrNoRows {
 		return "", nil
@@ -269,11 +371,11 @@ func UploaderIP(conn *sql.DB, storedName string) (string, error) {
 
 // UploadSource returns the source ("api" or "browser") of the stored file, or
 // "" if no matching record exists.
-func UploadSource(conn *sql.DB, storedName string) (string, error) {
+func UploadSource(conn *sql.DB, userID int64, storedName string) (string, error) {
 	var src string
 	err := conn.QueryRow(
-		`SELECT source FROM upload_history WHERE stored_name = ? ORDER BY id DESC LIMIT 1`,
-		storedName,
+		`SELECT source FROM upload_history WHERE user_id = ? AND stored_name = ? ORDER BY id DESC LIMIT 1`,
+		userID, storedName,
 	).Scan(&src)
 	if err == sql.ErrNoRows {
 		return "", nil
@@ -281,21 +383,44 @@ func UploadSource(conn *sql.DB, storedName string) (string, error) {
 	return src, err
 }
 
+// DeleteUserUploads removes all upload history and public shares for a user.
+func DeleteUserUploads(conn *sql.DB, userID int64) error {
+	if _, err := conn.Exec(`DELETE FROM upload_history WHERE user_id = ?`, userID); err != nil {
+		return err
+	}
+	_, err := conn.Exec(`DELETE FROM public_files WHERE user_id = ?`, userID)
+	return err
+}
+
+// DeleteUploadRecord removes the history rows for a stored file.
+func DeleteUploadRecord(conn *sql.DB, userID int64, storedName string) error {
+	_, err := conn.Exec(`DELETE FROM upload_history WHERE user_id = ? AND stored_name = ?`, userID, storedName)
+	return err
+}
+
 // SetUploadQuarantined updates the quarantine flag of the stored file name.
 // It is used when an admin quarantines or releases a file from the UI.
-func SetUploadQuarantined(conn *sql.DB, storedName string, quarantined bool) error {
+func SetUploadQuarantined(conn *sql.DB, userID int64, storedName string, quarantined bool) error {
 	_, err := conn.Exec(
-		`UPDATE upload_history SET quarantined = ? WHERE stored_name = ?`,
-		quarantined, storedName,
+		`UPDATE upload_history SET quarantined = ? WHERE user_id = ? AND stored_name = ?`,
+		quarantined, userID, storedName,
 	)
 	return err
 }
 
-func ListUploads(conn *sql.DB, limit, offset int) ([]UploadRecord, error) {
-	rows, err := conn.Query(
-		`SELECT original_name, stored_name, file_size, quarantined, remote_addr, created_at FROM upload_history ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-		limit, offset,
-	)
+// ListUploads returns recent uploads. userID < 0 returns records for every
+// owner; otherwise only that user's rows are returned.
+func ListUploads(conn *sql.DB, userID int64, limit, offset int) ([]UploadRecord, error) {
+	query := `SELECT user_id, original_name, stored_name, file_size, quarantined, remote_addr, created_at FROM upload_history`
+	args := []any{}
+	if userID >= 0 {
+		query += ` WHERE user_id = ?`
+		args = append(args, userID)
+	}
+	query += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
+
+	rows, err := conn.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +429,7 @@ func ListUploads(conn *sql.DB, limit, offset int) ([]UploadRecord, error) {
 	var out []UploadRecord
 	for rows.Next() {
 		var u UploadRecord
-		if err := rows.Scan(&u.OriginalName, &u.StoredName, &u.FileSize, &u.Quarantined, &u.RemoteAddr, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.UserID, &u.OriginalName, &u.StoredName, &u.FileSize, &u.Quarantined, &u.RemoteAddr, &u.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -314,6 +439,7 @@ func ListUploads(conn *sql.DB, limit, offset int) ([]UploadRecord, error) {
 
 type AuditRecord struct {
 	ID         int64
+	UserID     int64
 	Action     string
 	Summary    string
 	Detail     string
@@ -324,17 +450,25 @@ type AuditRecord struct {
 
 func InsertAudit(conn *sql.DB, r AuditRecord) error {
 	_, err := conn.Exec(
-		`INSERT INTO audit_log (action, summary, detail, remote_addr, user_agent, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		r.Action, r.Summary, r.Detail, r.RemoteAddr, r.UserAgent, r.CreatedAt,
+		`INSERT INTO audit_log (user_id, action, summary, detail, remote_addr, user_agent, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		r.UserID, r.Action, r.Summary, r.Detail, r.RemoteAddr, r.UserAgent, r.CreatedAt,
 	)
 	return err
 }
 
-func ListAudit(conn *sql.DB, limit, offset int) ([]AuditRecord, error) {
-	rows, err := conn.Query(
-		`SELECT id, action, summary, detail, remote_addr, user_agent, created_at FROM audit_log ORDER BY id DESC LIMIT ? OFFSET ?`,
-		limit, offset,
-	)
+// ListAudit returns audit rows. userID < 0 returns every row; otherwise only
+// that user's events.
+func ListAudit(conn *sql.DB, userID int64, limit, offset int) ([]AuditRecord, error) {
+	query := `SELECT id, user_id, action, summary, detail, remote_addr, user_agent, created_at FROM audit_log`
+	args := []any{}
+	if userID >= 0 {
+		query += ` WHERE user_id = ?`
+		args = append(args, userID)
+	}
+	query += ` ORDER BY id DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
+
+	rows, err := conn.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -343,7 +477,7 @@ func ListAudit(conn *sql.DB, limit, offset int) ([]AuditRecord, error) {
 	var out []AuditRecord
 	for rows.Next() {
 		var a AuditRecord
-		if err := rows.Scan(&a.ID, &a.Action, &a.Summary, &a.Detail, &a.RemoteAddr, &a.UserAgent, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.UserID, &a.Action, &a.Summary, &a.Detail, &a.RemoteAddr, &a.UserAgent, &a.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -351,8 +485,12 @@ func ListAudit(conn *sql.DB, limit, offset int) ([]AuditRecord, error) {
 	return out, rows.Err()
 }
 
-func CountAudit(conn *sql.DB) (int64, error) {
+func CountAudit(conn *sql.DB, userID int64) (int64, error) {
 	var n int64
-	err := conn.QueryRow(`SELECT COUNT(*) FROM audit_log`).Scan(&n)
+	if userID < 0 {
+		err := conn.QueryRow(`SELECT COUNT(*) FROM audit_log`).Scan(&n)
+		return n, err
+	}
+	err := conn.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE user_id = ?`, userID).Scan(&n)
 	return n, err
 }

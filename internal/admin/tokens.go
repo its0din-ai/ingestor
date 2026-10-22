@@ -9,11 +9,34 @@ import (
 
 	"github.com/encrypt0r/ingestor/internal/auth"
 	"github.com/encrypt0r/ingestor/internal/config"
+	"github.com/encrypt0r/ingestor/internal/identity"
+	"github.com/encrypt0r/ingestor/internal/users"
 	"github.com/encrypt0r/ingestor/internal/web"
 )
 
-// ListTokens returns all bearer tokens for the Tokens view.
+// ListTokens returns the account's own token metadata for regular users, or
+// the legacy .env token list for the superadmin.
 func (h *Handler) ListTokens(w http.ResponseWriter, r *http.Request) {
+	u, _ := identity.FromRequest(r)
+	if u.IsUser() {
+		info, err := users.Token(h.conn, u.ID, h.tokenSecret())
+		if err != nil {
+			web.JSON(w, http.StatusOK, map[string]any{"tokens": []bearerTokenData{}, "user_token": true})
+			return
+		}
+		web.JSON(w, http.StatusOK, map[string]any{
+			"tokens": []bearerTokenData{{
+				Label:     info.Label,
+				TokenID:   info.TokenID,
+				ExpiresAt: "",
+				Token:     info.Token,
+			}},
+			"user_token": true,
+			"created_at": info.CreatedAt.UTC().Format(time.RFC3339),
+		})
+		return
+	}
+
 	tokens := h.cfg.BearerTokens()
 	resp := make([]bearerTokenData, 0, len(tokens))
 	for _, t := range tokens {
@@ -22,8 +45,39 @@ func (h *Handler) ListTokens(w http.ResponseWriter, r *http.Request) {
 	web.JSON(w, http.StatusOK, map[string]any{"tokens": resp})
 }
 
-// CreateToken generates a new random bearer token and persists it.
+// RotateToken replaces the signed-in user's API token and returns the new
+// plaintext once.
+func (h *Handler) RotateToken(w http.ResponseWriter, r *http.Request) {
+	u, _ := identity.FromRequest(r)
+	if !u.IsUser() {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{
+			Status:  "error",
+			Message: "only regular users have API tokens",
+		})
+		return
+	}
+	token, info, err := users.RotateToken(h.conn, u.ID, users.TokenLabel, h.tokenSecret())
+	if err != nil {
+		h.settingsErr(w, err)
+		return
+	}
+	h.auditLog.UserTokenRotated(r, u.Username)
+	web.JSON(w, http.StatusOK, map[string]any{
+		"token":    token,
+		"token_id": info.TokenID,
+		"label":    info.Label,
+	})
+}
+
+// CreateToken generates a new random legacy bearer token and persists it.
 func (h *Handler) CreateToken(w http.ResponseWriter, r *http.Request) {
+	if u, _ := identity.FromRequest(r); !u.IsSuperadmin() {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{
+			Status:  "error",
+			Message: "superadmin access required",
+		})
+		return
+	}
 	var req struct {
 		Label     string `json:"label"`
 		ExpiresAt string `json:"expires_at"`
@@ -62,6 +116,13 @@ func (h *Handler) CreateToken(w http.ResponseWriter, r *http.Request) {
 
 // DeleteToken removes a bearer token by its short id fingerprint.
 func (h *Handler) DeleteToken(w http.ResponseWriter, r *http.Request) {
+	if u, _ := identity.FromRequest(r); !u.IsSuperadmin() {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{
+			Status:  "error",
+			Message: "superadmin access required",
+		})
+		return
+	}
 	tokenID := r.FormValue("token_id")
 	if tokenID == "" {
 		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{

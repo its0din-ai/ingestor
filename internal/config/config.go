@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/encrypt0r/ingestor/internal/quarantine"
+	"github.com/encrypt0r/ingestor/internal/users"
 )
 
 const (
@@ -57,7 +57,6 @@ type Config struct {
 	maxUploadMB   int64
 	quarantineExt []string
 	bearerTokens  []BearerToken
-	adminHash     []byte
 }
 
 func Load(conn *sql.DB) (*Config, error) {
@@ -91,30 +90,19 @@ func (c *Config) seed() error {
 		keyQuarantineExtensions, strings.Join(quarantine.DefaultBlacklist, ",")); err != nil {
 		return err
 	}
-	return c.seedAdminHash()
+	return c.seedSuperadmin()
 }
 
-func (c *Config) seedAdminHash() error {
-	var existing string
-	err := c.conn.QueryRow(`SELECT value FROM settings WHERE key = ?`, keyAdminPasswordHash).Scan(&existing)
-	if err == nil {
-		return nil
-	}
-	if err != sql.ErrNoRows {
+// seedSuperadmin creates the superadmin account on first boot, reusing the
+// legacy bcrypt hash stored by older versions so existing passwords keep
+// working.
+func (c *Config) seedSuperadmin() error {
+	var legacy string
+	err := c.conn.QueryRow(`SELECT value FROM settings WHERE key = ?`, keyAdminPasswordHash).Scan(&legacy)
+	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
-
-	raw := os.Getenv("admin_password")
-	if raw == "" {
-		slog.Warn("admin_password not set in .env; admin login disabled until a password is configured")
-		return nil
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(raw), bcrypt.DefaultCost)
-	if err != nil {
-		return err
-	}
-	_, err = c.conn.Exec(`INSERT INTO settings (key, value) VALUES (?, ?)`, keyAdminPasswordHash, string(hash))
-	return err
+	return users.SeedSuperadmin(c.conn, envOr("admin_username", "admin"), os.Getenv("admin_password"), legacy)
 }
 
 func (c *Config) refresh() error {
@@ -152,13 +140,18 @@ func (c *Config) refresh() error {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	uploadDir := c.normalizeUploadDir(values[keyUploadDir])
+	if err := validateUploadDir(uploadDir, uploadDir); err != nil {
+		slog.Warn("invalid upload_dir; falling back to uploads", "value", uploadDir, "err", err)
+		uploadDir = "uploads"
+	}
+
 	c.host = envOr("host", "127.0.0.1")
 	c.port = port
-	c.uploadDir = c.normalizeUploadDir(values[keyUploadDir])
+	c.uploadDir = uploadDir
 	c.maxUploadMB = maxMB
 	c.quarantineExt = splitExtensions(values[keyQuarantineExtensions])
 	c.bearerTokens = tokens
-	c.adminHash = []byte(values[keyAdminPasswordHash])
 	return nil
 }
 
@@ -202,17 +195,6 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
-}
-
-func writeEnv(key, value string) error {
-	envWriteMu.Lock()
-	defer envWriteMu.Unlock()
-	values, err := godotenv.Read()
-	if err != nil {
-		values = map[string]string{}
-	}
-	values[key] = value
-	return godotenv.Write(values, ".env")
 }
 
 func splitExtensions(s string) []string {
@@ -353,6 +335,49 @@ func (c *Config) normalizeUploadDir(dir string) string {
 	return clean
 }
 
+// ErrInvalidUploadDir marks upload_dir values that would expose application
+// files or per-user storage through the superadmin's content scope.
+var ErrInvalidUploadDir = errors.New("invalid upload directory")
+
+// reservedUploadRoots are project directories that must never be used as the
+// upload root: they hold application secrets, the database, or source.
+var reservedUploadRoots = map[string]bool{
+	".git":      true,
+	"data":      true,
+	"templates": true,
+	"internal":  true,
+	"resources": true,
+	"dist":      true,
+	"vendor":    true,
+}
+
+// validateUploadDir keeps the superadmin's content root away from the project
+// root, the per-user storage subtree, and application directories. New
+// locations must live under uploads/; re-saving the existing custom value is
+// permitted so upgrades do not break deployments with a pre-existing custom
+// directory.
+func validateUploadDir(dir, current string) error {
+	if dir == "" || dir == "." {
+		return fmt.Errorf("%w: the project root cannot be used", ErrInvalidUploadDir)
+	}
+	parts := strings.Split(dir, "/")
+	for _, part := range parts {
+		// Compare case-insensitively (and ignore Windows' trailing dots/spaces)
+		// so a case-insensitive filesystem cannot alias the per-user store.
+		seg := strings.ToLower(strings.TrimRight(part, ". "))
+		if seg == "users" {
+			return fmt.Errorf("%w: 'users' is reserved for per-user storage", ErrInvalidUploadDir)
+		}
+	}
+	if first := strings.ToLower(strings.TrimRight(parts[0], ". ")); reservedUploadRoots[first] {
+		return fmt.Errorf("%w: %q is a reserved directory", ErrInvalidUploadDir, parts[0])
+	}
+	if dir != current && dir != "uploads" && !strings.HasPrefix(dir, "uploads/") {
+		return fmt.Errorf("%w: new upload directories must be inside uploads/", ErrInvalidUploadDir)
+	}
+	return nil
+}
+
 func (c *Config) MaxUploadMB() int64 {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -392,15 +417,12 @@ func (c *Config) AuthenticateBearer(token string) (BearerToken, bool) {
 	return BearerToken{}, false
 }
 
-func (c *Config) VerifyAdminPassword(password string) bool {
-	c.mu.RLock()
-	hash := c.adminHash
-	c.mu.RUnlock()
-	return len(hash) > 0 && bcrypt.CompareHashAndPassword(hash, []byte(password)) == nil
-}
-
 func (c *Config) SetUploadDir(dir string) error {
-	return c.setSetting(keyUploadDir, c.normalizeUploadDir(dir))
+	clean := c.normalizeUploadDir(dir)
+	if err := validateUploadDir(clean, c.UploadDirRelative()); err != nil {
+		return err
+	}
+	return c.setSetting(keyUploadDir, clean)
 }
 
 func (c *Config) SetMaxUploadMB(mb int64) error {
@@ -418,19 +440,30 @@ func (c *Config) SetQuarantineExtensions(exts []string) error {
 	return c.setSetting(keyQuarantineExtensions, strings.Join(parts, ","))
 }
 
-func (c *Config) SetAdminPassword(password string) error {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return err
-	}
-	return c.setSetting(keyAdminPasswordHash, string(hash))
-}
-
-// SetBearerTokens persists the token list to .env and refreshes memory.
+// SetBearerTokens persists the token list to .env and refreshes memory. The
+// process environment is updated as well: refresh() re-reads bearer_tokens
+// from os.Getenv, so without this a later settings save would resurrect a
+// deleted token. The legacy single-token key is retired so it cannot shadow an
+// empty token list.
 func (c *Config) SetBearerTokens(tokens []BearerToken) error {
-	if err := writeEnv("bearer_tokens", serializeBearerTokens(tokens)); err != nil {
+	serialized := serializeBearerTokens(tokens)
+
+	envWriteMu.Lock()
+	values, err := godotenv.Read()
+	if err != nil {
+		values = map[string]string{}
+	}
+	values["bearer_tokens"] = serialized
+	delete(values, "bearer_token")
+	if err := godotenv.Write(values, ".env"); err != nil {
+		envWriteMu.Unlock()
 		return err
 	}
+	envWriteMu.Unlock()
+
+	_ = os.Setenv("bearer_tokens", serialized)
+	_ = os.Unsetenv("bearer_token")
+
 	c.mu.Lock()
 	c.bearerTokens = append([]BearerToken(nil), tokens...)
 	c.mu.Unlock()

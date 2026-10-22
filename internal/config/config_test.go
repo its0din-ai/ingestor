@@ -2,10 +2,87 @@ package config
 
 import (
 	"encoding/base64"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/encrypt0r/ingestor/internal/db"
 )
+
+func TestValidateUploadDir(t *testing.T) {
+	tests := []struct {
+		name    string
+		dir     string
+		current string
+		ok      bool
+	}{
+		{"default", "uploads", "uploads", true},
+		{"nested", "uploads/files", "uploads", true},
+		{"project root", ".", "uploads", false},
+		{"per-user store", "uploads/users", "uploads", false},
+		{"per-user dir", "uploads/users/2", "uploads", false},
+		{"per-user dir mixed case", "uploads/Users/2", "uploads", false},
+		{"per-user dir dot suffix", "uploads/users./2", "uploads", false},
+		{"data dir", "data", "uploads", false},
+		{"data dir mixed case", "Data", "uploads", false},
+		{"templates dir", "templates", "uploads", false},
+		{"existing custom dir", "files", "files", true},
+		{"move to arbitrary dir", "files", "uploads", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateUploadDir(tt.dir, tt.current)
+			if tt.ok && err != nil {
+				t.Fatalf("validateUploadDir(%q, %q) = %v, want nil", tt.dir, tt.current, err)
+			}
+			if !tt.ok && !errors.Is(err, ErrInvalidUploadDir) {
+				t.Fatalf("validateUploadDir(%q, %q) = %v, want ErrInvalidUploadDir", tt.dir, tt.current, err)
+			}
+		})
+	}
+}
+
+func TestSetBearerTokensRevocationSurvivesRefresh(t *testing.T) {
+	t.Setenv("jwt_secret", strings.Repeat("k", 64))
+	t.Setenv("upload_dir", "uploads")
+	t.Setenv("bearer_token", "legacy-token-value")
+	t.Chdir(t.TempDir())
+
+	conn, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	cfg, err := Load(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.AuthenticateBearer("legacy-token-value"); !ok {
+		t.Fatal("legacy token should be active at startup")
+	}
+
+	if err := cfg.SetBearerTokens([]BearerToken{{Token: "new-token-value"}}); err != nil {
+		t.Fatal(err)
+	}
+	// Any global settings save calls refresh(), which re-reads the environment.
+	if err := cfg.SetMaxUploadMB(128); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := cfg.AuthenticateBearer("legacy-token-value"); ok {
+		t.Fatal("revoked legacy token must not come back after refresh")
+	}
+	if _, ok := cfg.AuthenticateBearer("new-token-value"); !ok {
+		t.Fatal("new token must survive refresh")
+	}
+	if got := os.Getenv("bearer_token"); got != "" {
+		t.Fatalf("legacy bearer_token env = %q, want empty", got)
+	}
+}
 
 func TestParseBearerTokens(t *testing.T) {
 	tests := []struct {
