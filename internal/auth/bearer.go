@@ -21,12 +21,16 @@ func Bearer(cfg *config.Config, conn *sql.DB, auditLog *audit.Logger) func(http.
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := bearerFromHeader(r.Header.Get("Authorization"))
 
-			if u, ok := users.AuthenticateToken(conn, token); ok {
-				id := BearerIdentity{ID: TokenID(token), Label: u.Username, UserID: u.ID}
-				ctx := identity.WithUser(r.Context(), u)
-				ctx = context.WithValue(ctx, bearerKey, id)
-				next.ServeHTTP(w, r.WithContext(ctx))
-				return
+			// Single-user mode ignores per-user tokens; only the legacy .env
+			// token list is honored, matching the pre-multi-user release.
+			if !cfg.SingleUser() {
+				if u, ok := users.AuthenticateToken(conn, token); ok {
+					id := BearerIdentity{ID: TokenID(token), Label: u.Username, UserID: u.ID}
+					ctx := identity.WithUser(r.Context(), u)
+					ctx = context.WithValue(ctx, bearerKey, id)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
 			}
 
 			if matched, ok := cfg.AuthenticateBearer(token); ok {

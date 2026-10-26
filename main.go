@@ -127,18 +127,39 @@ func main() {
 	dashMux.HandleFunc("GET /dashboard/api/tokens", adminHandler.ListTokens)
 	dashMux.HandleFunc("POST /dashboard/api/tokens", adminHandler.CreateToken)
 	dashMux.HandleFunc("POST /dashboard/api/tokens/delete", adminHandler.DeleteToken)
-	dashMux.HandleFunc("POST /dashboard/api/user-token/rotate", adminHandler.RotateToken)
 
-	// User management (superadmin only). Admin middleware resolves the session
-	// user; Superadmin then enforces the role.
-	super := sessions.Superadmin()
-	dashMux.Handle("GET /dashboard/api/users", super(http.HandlerFunc(adminHandler.ListUsers)))
-	dashMux.Handle("POST /dashboard/api/users/create", super(http.HandlerFunc(adminHandler.CreateUser)))
-	dashMux.Handle("POST /dashboard/api/users/update", super(http.HandlerFunc(adminHandler.UpdateUser)))
-	dashMux.Handle("POST /dashboard/api/users/delete", super(http.HandlerFunc(adminHandler.DeleteUser)))
-	dashMux.Handle("GET /dashboard/api/users/files", super(http.HandlerFunc(adminHandler.UserFiles)))
-	dashMux.Handle("POST /dashboard/api/users/delete-file", super(http.HandlerFunc(adminHandler.DeleteUserFile)))
-	dashMux.Handle("POST /dashboard/api/users/wipe", super(http.HandlerFunc(adminHandler.WipeUser)))
+	// User management endpoints. Single-user mode answers them with 404 so the
+	// multi-user feature is indistinguishable from not existing.
+	userRoutes := []struct {
+		pattern string
+		handler http.Handler
+	}{
+		{"GET /dashboard/api/users", http.HandlerFunc(adminHandler.ListUsers)},
+		{"POST /dashboard/api/users/create", http.HandlerFunc(adminHandler.CreateUser)},
+		{"POST /dashboard/api/users/update", http.HandlerFunc(adminHandler.UpdateUser)},
+		{"POST /dashboard/api/users/delete", http.HandlerFunc(adminHandler.DeleteUser)},
+		{"GET /dashboard/api/users/files", http.HandlerFunc(adminHandler.UserFiles)},
+		{"POST /dashboard/api/users/delete-file", http.HandlerFunc(adminHandler.DeleteUserFile)},
+		{"POST /dashboard/api/users/wipe", http.HandlerFunc(adminHandler.WipeUser)},
+	}
+	if cfg.SingleUser() {
+		disabled := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			web.JSON(w, http.StatusNotFound, web.ErrorResponse{Status: "error", Message: "not found"})
+		})
+		for _, rt := range userRoutes {
+			dashMux.Handle(rt.pattern, disabled)
+		}
+		dashMux.Handle("POST /dashboard/api/user-token/rotate", disabled)
+	} else {
+		dashMux.HandleFunc("POST /dashboard/api/user-token/rotate", adminHandler.RotateToken)
+
+		// Admin middleware resolves the session user; Superadmin enforces the
+		// role.
+		super := sessions.Superadmin()
+		for _, rt := range userRoutes {
+			dashMux.Handle(rt.pattern, super(rt.handler))
+		}
+	}
 
 	mux.Handle("/dashboard/", sessions.Admin()(dashMux))
 

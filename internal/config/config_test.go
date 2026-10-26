@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/encrypt0r/ingestor/internal/db"
+	"github.com/encrypt0r/ingestor/internal/users"
 )
 
 func TestValidateUploadDir(t *testing.T) {
@@ -81,6 +82,115 @@ func TestSetBearerTokensRevocationSurvivesRefresh(t *testing.T) {
 	}
 	if got := os.Getenv("bearer_token"); got != "" {
 		t.Fatalf("legacy bearer_token env = %q, want empty", got)
+	}
+}
+
+// TestLegacyEnvBootsWithSingleAdmin reproduces a pre-multi-user .env: no
+// admin_username, the singular bearer_token key, and the password in
+// admin_password. Loading must seed the legacy admin and keep the old token.
+func TestLegacyEnvBootsWithSingleAdmin(t *testing.T) {
+	t.Setenv("jwt_secret", strings.Repeat("k", 64))
+	t.Setenv("admin_username", "")
+	t.Setenv("admin_password", "legacy-password-123")
+	// SetBearerTokens updates the process environment directly, so another
+	// test may leave bearer_tokens behind. Clear it to exercise the singular
+	// compatibility key.
+	t.Setenv("bearer_tokens", "")
+	t.Setenv("bearer_token", "legacy-token-value")
+	t.Setenv("upload_dir", "uploads")
+	t.Chdir(t.TempDir())
+
+	conn, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	cfg, err := Load(conn)
+	if err != nil {
+		t.Fatalf("legacy .env must load: %v", err)
+	}
+	if !cfg.LegacyEnv() {
+		t.Fatal("admin_username being unset must select legacy mode")
+	}
+	if got := cfg.AdminUsername(); got != "admin" {
+		t.Fatalf("AdminUsername = %q, want admin", got)
+	}
+	su, err := users.Superadmin(conn)
+	if err != nil {
+		t.Fatalf("superadmin seeding failed: %v", err)
+	}
+	if su.Username != "admin" {
+		t.Fatalf("superadmin username = %q, want admin", su.Username)
+	}
+	if _, err := users.Authenticate(conn, "admin", "legacy-password-123"); err != nil {
+		t.Fatalf("legacy admin_password should authenticate: %v", err)
+	}
+	if _, ok := cfg.AuthenticateBearer("legacy-token-value"); !ok {
+		t.Fatal("singular bearer_token must remain active")
+	}
+}
+
+func TestNewEnvIsNotLegacy(t *testing.T) {
+	t.Setenv("jwt_secret", strings.Repeat("k", 64))
+	t.Setenv("admin_username", "root")
+	t.Setenv("admin_password", "modern-password-123")
+	t.Setenv("upload_dir", "uploads")
+	t.Chdir(t.TempDir())
+
+	conn, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	cfg, err := Load(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LegacyEnv() {
+		t.Fatal("an explicit admin_username must disable legacy mode")
+	}
+	if got := cfg.AdminUsername(); got != "root" {
+		t.Fatalf("AdminUsername = %q, want root", got)
+	}
+	if _, err := users.Authenticate(conn, "root", "modern-password-123"); err != nil {
+		t.Fatalf("configured superadmin should authenticate: %v", err)
+	}
+}
+
+func TestSingleUserFlag(t *testing.T) {
+	tests := []struct {
+		upper string
+		lower string
+		want  bool
+	}{
+		{"", "", false},
+		{"true", "", true},
+		{"TRUE", "", true},
+		{"1", "", true},
+		{"yes", "", true},
+		{"on", "", true},
+		{"false", "", false},
+		{"0", "", false},
+		{"", "true", true},
+		{"0", "true", false},
+	}
+	for _, tt := range tests {
+		t.Run("upper="+tt.upper+",lower="+tt.lower, func(t *testing.T) {
+			t.Setenv("SINGLE_USER", tt.upper)
+			t.Setenv("single_user", tt.lower)
+			// An explicit admin_username must not defeat the flag.
+			t.Setenv("admin_username", "root")
+
+			c := &Config{}
+			if got := c.SingleUser(); got != tt.want {
+				t.Fatalf("SingleUser = %v, want %v", got, tt.want)
+			}
+			if got := c.LegacyEnv(); got != tt.want {
+				t.Fatalf("LegacyEnv = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

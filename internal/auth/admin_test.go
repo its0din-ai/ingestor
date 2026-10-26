@@ -12,7 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/encrypt0r/ingestor/internal/db"
+	"github.com/encrypt0r/ingestor/internal/identity"
 	"github.com/encrypt0r/ingestor/internal/users"
 )
 
@@ -171,6 +174,126 @@ func TestSessionAllowlistAndLogoutDestroysToken(t *testing.T) {
 	}()})
 	if _, ok := m.sessionUser(req2); ok {
 		t.Fatal("expected invalid session for jti not in allowlist")
+	}
+}
+
+// TestLegacySessionResolvesToSuperadmin keeps admins signed in across the
+// multi-user upgrade: session rows written by older versions have user_id 0
+// (added by the schema migration) and the old JWT subject is "admin".
+func TestLegacySessionResolvesToSuperadmin(t *testing.T) {
+	dir := t.TempDir()
+	conn, err := db.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if err := users.SeedSuperadmin(conn, "admin", "legacy-password-123", ""); err != nil {
+		t.Fatal(err)
+	}
+	const jti = "legacy-jti"
+	if err := db.CreateSession(conn, jti, 0, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	claims := jwt.RegisteredClaims{
+		Subject:   "admin",
+		ID:        jti,
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS512, claims).SignedString(testKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Manager{conn: conn, key: testKey(), ttl: time.Hour}
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+	u, ok := m.sessionUser(req)
+	if !ok {
+		t.Fatal("legacy session should remain valid after the upgrade")
+	}
+	if u.Role != identity.RoleSuperadmin || u.Username != "admin" {
+		t.Fatalf("legacy session user = %+v, want the superadmin", u)
+	}
+}
+
+func TestLegacySessionRequiresSuperadmin(t *testing.T) {
+	dir := t.TempDir()
+	conn, err := db.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	const jti = "legacy-jti"
+	if err := db.CreateSession(conn, jti, 0, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	claims := jwt.RegisteredClaims{
+		Subject:   "admin",
+		ID:        jti,
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS512, claims).SignedString(testKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Manager{conn: conn, key: testKey(), ttl: time.Hour}
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+	if _, ok := m.sessionUser(req); ok {
+		t.Fatal("ownerless session must be rejected when no superadmin exists")
+	}
+}
+
+// TestSingleUserRejectsRegularSessions ignores accounts created by the
+// multi-user feature while keeping the superadmin signed in.
+func TestSingleUserRejectsRegularSessions(t *testing.T) {
+	dir := t.TempDir()
+	conn, err := db.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if err := users.SeedSuperadmin(conn, "admin", "legacy-password-123", ""); err != nil {
+		t.Fatal(err)
+	}
+	su, err := users.Superadmin(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	regular, err := users.Create(conn, "alice", "strong-password-123", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Manager{conn: conn, key: testKey(), ttl: time.Hour, singleUser: true}
+	check := func(name string, userID int64) bool {
+		t.Helper()
+		jti := "jti-" + name
+		if err := db.CreateSession(conn, jti, userID, time.Now().Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		token, err := m.signToken(jti, userID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodGet, "/dashboard/", nil)
+		req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+		_, ok := m.sessionUser(req)
+		return ok
+	}
+
+	if !check("superadmin", su.ID) {
+		t.Fatal("superadmin session must remain valid in single-user mode")
+	}
+	if check("regular", regular.ID) {
+		t.Fatal("regular user session must be rejected in single-user mode")
 	}
 }
 

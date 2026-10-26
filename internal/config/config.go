@@ -74,6 +74,13 @@ func Load(conn *sql.DB) (*Config, error) {
 	if err := c.refresh(); err != nil {
 		return nil, err
 	}
+	if c.SingleUser() {
+		slog.Info("single-user mode enabled; multi-user features disabled",
+			"admin_username", c.AdminUsername())
+	} else if c.LegacyEnv() {
+		slog.Info("legacy single-admin .env detected (admin_username unset)",
+			"admin_username", c.AdminUsername())
+	}
 	return c, nil
 }
 
@@ -183,6 +190,36 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// AdminUsername is the configured superadmin username. It defaults to the
+// legacy "admin" name, which is also what pre-multi-user installs used.
+func (c *Config) AdminUsername() string {
+	return envOr("admin_username", "admin")
+}
+
+// SingleUser reports whether SINGLE_USER=true is set (the lowercase
+// single_user key is accepted too). In this mode the multi-user feature set is
+// disabled: no account management, no per-user storage or API tokens, and the
+// dashboard behaves like the pre-multi-user release.
+func (c *Config) SingleUser() bool {
+	raw := strings.TrimSpace(os.Getenv("SINGLE_USER"))
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("single_user"))
+	}
+	switch strings.ToLower(raw) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// LegacyEnv reports whether this deployment uses a pre-multi-user .env.
+// admin_username did not exist before multi-user support, so its absence (and
+// not a database version) is what selects the single-admin compatibility path.
+// The explicit SINGLE_USER flag always selects it.
+func (c *Config) LegacyEnv() bool {
+	return c.SingleUser() || strings.TrimSpace(os.Getenv("admin_username")) == ""
 }
 
 func durationEnv(key string, fallback time.Duration) time.Duration {

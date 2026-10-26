@@ -357,7 +357,7 @@ function animateView(view) {
         <input type="hidden" name="csrf_token" value="{{.CSRF}}">
         <div class="field">
           <label>Username</label>
-          <input type="text" name="username" value="admin" autocomplete="username" autofocus required>
+          <input type="text" name="username" value="{{.AdminUsername}}" autocomplete="username" autofocus required>
         </div>
         <div class="field">
           <label>Password</label>
@@ -381,7 +381,7 @@ function animateView(view) {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg>
       <span>Exfil</span>
     </a>
-    {{if eq .Role "superadmin"}}
+    {{if and (eq .Role "superadmin") (not .SingleUser)}}
     <a href="#" data-view="users">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
       <span>Users</span>
@@ -564,7 +564,7 @@ function animateView(view) {
     <div class="empty" id="tokens-empty" style="display:none">No tokens yet. Create one to enable API uploads.</div>
   </div>
 
-  {{if eq .Role "superadmin"}}
+  {{if and (eq .Role "superadmin") (not .SingleUser)}}
   <div id="view-users" style="display:none">
     <div class="topbar">
       <div><div class="eyebrow">Accounts</div><h1>Users</h1><div class="meta">Manage accounts, quotas, and storage.</div></div>
@@ -592,7 +592,7 @@ function animateView(view) {
       <h2 id="docs-auth">Authentication</h2>
       <p>API uploads require a bearer token from the <strong>Tokens</strong> view, sent in the <code>Authorization</code> header:</p>
       <pre><code>Authorization: Bearer $TOKEN</code></pre>
-      <p>The dashboard uses a secure session. Signing out revokes it immediately, and changing a password signs out that account's active sessions. Login is rate limited to 15 attempts per 15 minutes per IP. The superadmin manages accounts from the <strong>Users</strong> view; regular users only ever see their own storage and activity.</p>
+      <p>The dashboard uses a secure session. Signing out revokes it immediately, and changing a password signs out that account's active sessions. Login is rate limited to 15 attempts per 15 minutes per IP. {{if .SingleUser}}This deployment runs in single-user mode: one admin account manages the shared workspace.{{else}}The superadmin manages accounts from the <strong>Users</strong> view; regular users only ever see their own storage and activity.{{end}}</p>
 
       <h2 id="docs-upload">Upload API</h2>
       <p>Two upload paths exist:</p>
@@ -625,8 +625,8 @@ function animateView(view) {
         <li><strong>Files</strong> — browser uploads (drag-and-drop with progress), search, text previews, download, quarantine/release, public sharing, and delete, with per-file status and uploader IP. Shows a live disk-usage monitor (uploads / used / total, % free).</li>
         <li><strong>Exfil</strong> — the same file actions for files uploaded via the API (<code>/upload</code>), kept separate so browser uploads and token uploads are easy to tell apart.</li>
         <li><strong>Settings</strong> — hot-reload upload directory, max upload size, and quarantine extensions (superadmin), and change your own password. Changing a password logs out that account's sessions.</li>
-        <li><strong>Users</strong> — superadmin only: create accounts, set storage quotas, disable or delete users, inspect file metadata, and wipe storage. Passwords are changed by each user from Settings; the superadmin cannot reset them or access user file content. The superadmin only browses the shared workspace.</li>
-        <li><strong>Tokens</strong> — regular users get one personal API token, masked by default in the Tokens view. The superadmin manages the workspace's API tokens.</li>
+        {{if not .SingleUser}}<li><strong>Users</strong> — superadmin only: create accounts, set storage quotas, disable or delete users, inspect file metadata, and wipe storage. Passwords are changed by each user from Settings; the superadmin cannot reset them or access user file content. The superadmin only browses the shared workspace.</li>{{end}}
+        <li><strong>Tokens</strong> — {{if .SingleUser}}the superadmin manages the workspace's API tokens.{{else}}regular users get one personal API token, masked by default in the Tokens view. The superadmin manages the workspace's API tokens.{{end}}</li>
         <li><strong>Audit</strong> — paginated log of every login, upload, read, download, quarantine/release, public-share access, settings change, and file action, with client IP and User-Agent, pruned after the configured retention (default 30 days). Click a remote IP to open its <code>ipinfo.io</code> lookup in a new tab. Actions received through the CF proxy are labeled <code>via cf-proxy</code> in their summary.</li>
         <li><strong>Dark / light theme</strong> and a collapsible sidebar — toggled from the sidebar, persisted in your browser.</li>
       </ul>

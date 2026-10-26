@@ -38,10 +38,11 @@ const (
 // logging out (which deletes the row) destroys the token even though its
 // signature remains valid.
 type Manager struct {
-	conn   *sql.DB
-	key    []byte
-	ttl    time.Duration
-	secure bool
+	conn       *sql.DB
+	key        []byte
+	ttl        time.Duration
+	secure     bool
+	singleUser bool
 }
 
 // NewManager builds a Manager from the configured JWT secret and session TTL.
@@ -51,10 +52,11 @@ func NewManager(cfg *config.Config, conn *sql.DB) (*Manager, error) {
 		return nil, err
 	}
 	return &Manager{
-		conn:   conn,
-		key:    key,
-		ttl:    cfg.SessionTTL(),
-		secure: cfg.CookieSecure(),
+		conn:       conn,
+		key:        key,
+		ttl:        cfg.SessionTTL(),
+		secure:     cfg.CookieSecure(),
+		singleUser: cfg.SingleUser(),
 	}, nil
 }
 
@@ -154,8 +156,23 @@ func (m *Manager) sessionUser(r *http.Request) (identity.User, bool) {
 		_ = db.DeleteSession(m.conn, claims.ID)
 		return identity.User{}, false
 	}
+	if userID == 0 {
+		// Sessions issued before multi-user support have no owner. Their only
+		// possible principal is the deployment's single superadmin, which the
+		// upgrade keeps in place, so map the legacy row to that account.
+		su, err := users.Superadmin(m.conn)
+		if err != nil {
+			return identity.User{}, false
+		}
+		userID = su.ID
+	}
 	u, err := users.Get(m.conn, userID)
 	if err != nil || u.Disabled {
+		return identity.User{}, false
+	}
+	// Single-user mode ignores accounts created by the multi-user feature;
+	// only the superadmin may hold a dashboard session.
+	if m.singleUser && u.Role != identity.RoleSuperadmin {
 		return identity.User{}, false
 	}
 	return identity.User{ID: u.ID, Username: u.Username, Role: u.Role}, true

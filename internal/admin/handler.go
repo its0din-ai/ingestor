@@ -55,6 +55,14 @@ func (h *Handler) LoginForm(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	remote := logging.ClientIP(r)
 	username := strings.TrimSpace(r.FormValue("username"))
+	// Pre-multi-user .env files had no admin_username and the login form only
+	// submitted a password. Keep those deployments working by resolving an
+	// empty username to the single superadmin account.
+	if username == "" && h.cfg.LegacyEnv() {
+		if su, err := users.Superadmin(h.conn); err == nil {
+			username = su.Username
+		}
+	}
 	if !h.loginLimiter.Allow(remote) {
 		h.auditLog.LoginFailed(r, username)
 		web.JSON(w, http.StatusTooManyRequests, web.ErrorResponse{
@@ -64,6 +72,10 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, err := users.Authenticate(h.conn, username, r.FormValue("password"))
+	if err == nil && h.cfg.SingleUser() && u.Role != identity.RoleSuperadmin {
+		// Multi-user accounts are ignored in single-user mode.
+		err = users.ErrInvalidCredentials
+	}
 	if err != nil {
 		h.auditLog.LoginFailed(r, username)
 		csrf := auth.CSRFToken(r)
@@ -92,20 +104,22 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 type dashboardData struct {
-	View        string
-	CSRF        string
-	UploadDir   string
-	MaxUploadMB int64
-	BaseURL     string
-	History     []db.UploadRecord
-	Error       string
-	Role        string
-	Username    string
-	UserID      int64
-	Version     string
-	QuotaMB     int64
-	UsedBytes   int64
-	DefaultView string
+	View          string
+	CSRF          string
+	UploadDir     string
+	MaxUploadMB   int64
+	BaseURL       string
+	History       []db.UploadRecord
+	Error         string
+	Role          string
+	Username      string
+	UserID        int64
+	Version       string
+	QuotaMB       int64
+	UsedBytes     int64
+	DefaultView   string
+	AdminUsername string
+	SingleUser    bool
 }
 
 type bearerTokenData struct {
@@ -302,15 +316,17 @@ func (h *Handler) settingsErr(w http.ResponseWriter, err error) {
 
 func (h *Handler) render(w http.ResponseWriter, r *http.Request, view string, csrf string, history []db.UploadRecord, errMsg string) {
 	data := dashboardData{
-		View:        view,
-		CSRF:        csrf,
-		UploadDir:   h.cfg.UploadDir(),
-		MaxUploadMB: h.cfg.MaxUploadMB(),
-		BaseURL:     baseURL(r),
-		History:     history,
-		Error:       errMsg,
-		Version:     version.Version,
-		DefaultView: "files",
+		View:          view,
+		CSRF:          csrf,
+		UploadDir:     h.cfg.UploadDir(),
+		MaxUploadMB:   h.cfg.MaxUploadMB(),
+		BaseURL:       baseURL(r),
+		History:       history,
+		Error:         errMsg,
+		Version:       version.Version,
+		DefaultView:   "files",
+		AdminUsername: h.cfg.AdminUsername(),
+		SingleUser:    h.cfg.SingleUser(),
 	}
 	if u, ok := identity.FromRequest(r); ok {
 		data.Role = u.Role

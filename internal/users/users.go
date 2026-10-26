@@ -40,6 +40,8 @@ var (
 	ErrWeakPassword       = fmt.Errorf("password must be at least %d characters", MinPasswordLen)
 	ErrInvalidQuota       = errors.New("quota must be between 0 and 1000000 MB")
 	ErrLastSuperadmin     = errors.New("cannot remove the last superadmin")
+	ErrNoSuperadmin       = errors.New("no superadmin account")
+	ErrManySuperadmins    = errors.New("multiple superadmin accounts")
 )
 
 var usernameRE = regexp.MustCompile(`^[A-Za-z0-9._-]{3,32}$`)
@@ -202,6 +204,40 @@ func List(conn *sql.DB) ([]User, error) {
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// Superadmin returns the deployment's single superadmin identity. It fails
+// closed when none or more than one exists, so callers never have to guess
+// which admin a pre-multi-user session or login belongs to.
+func Superadmin(conn *sql.DB) (identity.User, error) {
+	rows, err := conn.Query(
+		`SELECT id, username, role FROM users WHERE role = ? ORDER BY id LIMIT 2`,
+		identity.RoleSuperadmin,
+	)
+	if err != nil {
+		return identity.User{}, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []identity.User
+	for rows.Next() {
+		var u identity.User
+		if err := rows.Scan(&u.ID, &u.Username, &u.Role); err != nil {
+			return identity.User{}, err
+		}
+		out = append(out, u)
+	}
+	if err := rows.Err(); err != nil {
+		return identity.User{}, err
+	}
+	switch len(out) {
+	case 0:
+		return identity.User{}, ErrNoSuperadmin
+	case 1:
+		return out[0], nil
+	default:
+		return identity.User{}, ErrManySuperadmins
+	}
 }
 
 func Create(conn *sql.DB, username, password string, quotaMB int64) (User, error) {
