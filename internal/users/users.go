@@ -492,6 +492,49 @@ func CreateToken(conn *sql.DB, userID int64, label string, secret []byte) (strin
 	return token, TokenInfo{ID: id, Label: label, TokenID: hash[:6], Token: token, CreatedAt: time.Now()}, nil
 }
 
+// CreateTokenValue stores a caller-supplied token value for a user, replacing
+// every existing token (the same contract as RotateToken). The SHA-256 digest
+// is used for authentication; the ciphertext lets the owner view the value
+// again later.
+func CreateTokenValue(conn *sql.DB, userID int64, label, token string, secret []byte) (TokenInfo, error) {
+	if token == "" {
+		return TokenInfo{}, errors.New("empty token")
+	}
+	enc, err := encryptToken(secret, token)
+	if err != nil {
+		return TokenInfo{}, err
+	}
+	if strings.TrimSpace(label) == "" {
+		label = TokenLabel
+	}
+	hash := hashToken(token)
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return TokenInfo{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(`DELETE FROM user_tokens WHERE user_id = ?`, userID); err != nil {
+		return TokenInfo{}, err
+	}
+	res, err := tx.Exec(
+		`INSERT INTO user_tokens (user_id, token_hash, token_enc, label) VALUES (?, ?, ?, ?)`,
+		userID, hash, enc, label,
+	)
+	if err != nil {
+		return TokenInfo{}, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return TokenInfo{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return TokenInfo{}, err
+	}
+	return TokenInfo{ID: id, Label: label, TokenID: hash[:6], Token: token, CreatedAt: time.Now()}, nil
+}
+
 // RotateToken replaces every existing token for a user with a fresh one.
 func RotateToken(conn *sql.DB, userID int64, label string, secret []byte) (string, TokenInfo, error) {
 	if _, err := conn.Exec(`DELETE FROM user_tokens WHERE user_id = ?`, userID); err != nil {
@@ -520,6 +563,18 @@ func AuthenticateToken(conn *sql.DB, token string) (identity.User, bool) {
 		return identity.User{}, false
 	}
 	return identity.User{ID: id, Username: name, Role: role}, true
+}
+
+// TokenOwner reports whether token is already issued to an account and, if
+// so, to which user. The disabled flag is deliberately ignored so callers can
+// detect collisions before the UNIQUE constraint on token_hash fires.
+func TokenOwner(conn *sql.DB, token string) (int64, bool) {
+	if token == "" {
+		return 0, false
+	}
+	var userID int64
+	err := conn.QueryRow(`SELECT user_id FROM user_tokens WHERE token_hash = ?`, hashToken(token)).Scan(&userID)
+	return userID, err == nil
 }
 
 // Token returns the most recent token for a user, decrypting the plaintext for

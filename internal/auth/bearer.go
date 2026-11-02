@@ -9,6 +9,8 @@ import (
 	"github.com/encrypt0r/ingestor/internal/audit"
 	"github.com/encrypt0r/ingestor/internal/config"
 	"github.com/encrypt0r/ingestor/internal/identity"
+	"github.com/encrypt0r/ingestor/internal/logging"
+	"github.com/encrypt0r/ingestor/internal/ratelimit"
 	"github.com/encrypt0r/ingestor/internal/users"
 	"github.com/encrypt0r/ingestor/internal/web"
 )
@@ -16,7 +18,9 @@ import (
 // Bearer guards the upload API. Per-user tokens are looked up by digest;
 // legacy tokens from .env remain valid and upload to unowned storage. The
 // matched token's fingerprint and owner are attached to the request context.
-func Bearer(cfg *config.Config, conn *sql.DB, auditLog *audit.Logger) func(http.Handler) http.Handler {
+// Failed attempts are counted by failLimiter (keyed by client IP) so a guessed
+// or collided plain token cannot be brute-forced via the upload endpoint.
+func Bearer(cfg *config.Config, conn *sql.DB, auditLog *audit.Logger, failLimiter *ratelimit.Limiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := bearerFromHeader(r.Header.Get("Authorization"))
@@ -38,6 +42,15 @@ func Bearer(cfg *config.Config, conn *sql.DB, auditLog *audit.Logger) func(http.
 				ctx := identity.WithUser(r.Context(), identity.User{Role: identity.RoleLegacy})
 				ctx = context.WithValue(ctx, bearerKey, id)
 				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			if failLimiter != nil && !failLimiter.Allow(logging.ClientIP(r)) {
+				auditLog.BearerFailed(r, r.URL.Path)
+				web.JSON(w, http.StatusTooManyRequests, web.ErrorResponse{
+					Status:  "error",
+					Message: "too many failed authentication attempts, try again later",
+				})
 				return
 			}
 

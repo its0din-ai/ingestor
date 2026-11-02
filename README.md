@@ -134,6 +134,10 @@ Two endpoints accept uploads:
 
 Both accept multipart form data or a raw request body. One file is stored per request.
 
+Failed bearer authentication is rate limited to 20 attempts per 15 minutes per
+client IP; further failures return `429`. Successful requests are never
+throttled. This makes guessing a plain token one value at a time impractical.
+
 Multipart example:
 
 ```sh
@@ -166,6 +170,24 @@ Successful response:
 
 If a file matches a quarantine extension, the response reports `quarantined: true` and the stored name gains a `.quarantined` suffix.
 
+### Plain (mnemonic) tokens
+
+Every account can create a **plain token** from the Tokens view. The server
+generates a five-word phrase from the EFF large Diceware wordlist, joined by
+hyphens (for example `amber-cobalt-lunar-otter-violet`). It is readable and
+typeable, but it is still a bearer credential. Five words give about 64.6 bits of entropy,
+far more than a hand-picked password.
+
+- Regular users' plain tokens replace their personal token. They are stored
+  hashed for lookup and encrypted at rest so the owner can view them again.
+- Superadmins add workspace tokens, which are stored in plaintext in `.env`.
+- A generated phrase that is already in use is silently redrawn, so token
+  creation cannot be used to test whether a value exists.
+- Treat the phrase like a password: anyone who learns it can upload as that
+  account. Failed bearer authentication is rate limited per client IP.
+
+The wordlist is the EFF large Diceware list (CC BY 3.0).
+
 Dashboard uploads use the session-authenticated endpoint `POST /dashboard/upload`. They keep the original filename and return `409` when a file with that name already exists.
 
 ## Dashboard
@@ -175,7 +197,7 @@ The dashboard is session authenticated and CSRF protected.
 - Files - browser uploads, search, text preview, rename, download, delete, quarantine, release, and public sharing
 - Exfil - the same actions for files uploaded through the API
 - Settings - change the upload directory, max upload size, quarantine extensions, and the current account password
-- Tokens - manage the workspace token list, or rotate a personal token in multi-user mode
+- Tokens - manage the workspace token list (random or plain), or rotate a personal token in multi-user mode
 - Users - superadmin only in multi-user mode; create accounts, set quotas, disable, delete, inspect file metadata, and wipe per-user storage
 - Audit - paginated activity log with client IP and user agent
 - Docs - in-app usage reference

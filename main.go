@@ -20,9 +20,17 @@ import (
 	"github.com/encrypt0r/ingestor/internal/config"
 	"github.com/encrypt0r/ingestor/internal/db"
 	"github.com/encrypt0r/ingestor/internal/logging"
+	"github.com/encrypt0r/ingestor/internal/ratelimit"
 	"github.com/encrypt0r/ingestor/internal/upload"
 	"github.com/encrypt0r/ingestor/internal/version"
 	"github.com/encrypt0r/ingestor/internal/web"
+)
+
+const (
+	// Failed bearer authentications are throttled per client IP. This is the
+	// real guessing oracle for plain tokens, so keep the window small.
+	bearerFailLimit  = 20
+	bearerFailWindow = 15 * time.Minute
 )
 
 func main() {
@@ -60,6 +68,9 @@ func main() {
 	}
 	uploadHandler := upload.New(cfg, conn, auditLog)
 	adminHandler := admin.New(cfg, conn, sessions, tmpl, auditLog)
+	// One limiter shared by every bearer-protected endpoint, so an attacker
+	// cannot reset the budget by switching between / and /upload.
+	bearerFailLimiter := ratelimit.New(bearerFailLimit, bearerFailWindow)
 
 	mux := http.NewServeMux()
 
@@ -90,7 +101,7 @@ func main() {
 	// root: GET redirects to login/dashboard; other methods are the
 	// bearer-protected upload sink (accept-and-log-everything).
 	rootRedirect := sessions.Root()
-	bearerUpload := auth.Bearer(cfg, conn, auditLog)(uploadHandler)
+	bearerUpload := auth.Bearer(cfg, conn, auditLog, bearerFailLimiter)(uploadHandler)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			rootRedirect(w, r)
@@ -127,6 +138,7 @@ func main() {
 	dashMux.HandleFunc("GET /dashboard/api/audit", adminHandler.ListAudit)
 	dashMux.HandleFunc("GET /dashboard/api/tokens", adminHandler.ListTokens)
 	dashMux.HandleFunc("POST /dashboard/api/tokens", adminHandler.CreateToken)
+	dashMux.HandleFunc("POST /dashboard/api/tokens/plain", adminHandler.CreatePlainToken)
 	dashMux.HandleFunc("POST /dashboard/api/tokens/delete", adminHandler.DeleteToken)
 
 	// User management endpoints. Single-user mode answers them with 404 so the
@@ -151,8 +163,10 @@ func main() {
 			dashMux.Handle(rt.pattern, disabled)
 		}
 		dashMux.Handle("POST /dashboard/api/user-token/rotate", disabled)
+		dashMux.Handle("POST /dashboard/api/user-token/plain", disabled)
 	} else {
 		dashMux.HandleFunc("POST /dashboard/api/user-token/rotate", adminHandler.RotateToken)
+		dashMux.HandleFunc("POST /dashboard/api/user-token/plain", adminHandler.CreatePlainUserToken)
 
 		// Admin middleware resolves the session user; Superadmin enforces the
 		// role.
@@ -165,7 +179,7 @@ func main() {
 	mux.Handle("/dashboard/", sessions.Admin()(dashMux))
 
 	// upload API (bearer protected)
-	mux.Handle("/upload", auth.Bearer(cfg, conn, auditLog)(uploadHandler))
+	mux.Handle("/upload", auth.Bearer(cfg, conn, auditLog, bearerFailLimiter)(uploadHandler))
 
 	addr := cfg.Addr()
 	writeTimeout := cfg.WriteTimeout()

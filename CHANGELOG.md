@@ -14,6 +14,12 @@ Releases are annotated git tags named `vMAJOR.MINOR.PATCH`.
   and are race-safe: concurrent renames of one file resolve to a single
   winner, and two files racing for one name cannot destroy either payload.
   Quarantine state, upload history, and public links follow the new name.
+- Create plain tokens from the Tokens view: the server generates a readable
+  five-word mnemonic (about 64.6 bits) instead of a random hex secret. Regular
+  users' tokens replace their personal token (hashed + encrypted at rest);
+  the superadmin can add workspace tokens. A phrase that is already in use is
+  silently redrawn, so the endpoint cannot confirm whether a value exists,
+  and failed bearer authentication is rate limited per client IP.
 
 ## [3.11.0] - 2026-11-02
 

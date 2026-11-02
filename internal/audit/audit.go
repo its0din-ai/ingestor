@@ -38,6 +38,7 @@ const (
 	ActionUserDeleted      Action = "user_deleted"
 	ActionUserDataDeleted  Action = "user_data_deleted"
 	ActionUserTokenRotated Action = "user_token_rotated"
+	ActionUserTokenPlain   Action = "user_token_plain"
 )
 
 type Logger struct {
@@ -197,4 +198,8 @@ func (l *Logger) UserDataDeleted(r *http.Request, username string) {
 
 func (l *Logger) UserTokenRotated(r *http.Request, username string) {
 	l.record(ActionUserTokenRotated, "user token rotated: "+username, map[string]any{"username": username}, r)
+}
+
+func (l *Logger) UserTokenPlain(r *http.Request, username string) {
+	l.record(ActionUserTokenPlain, "user set a plaintext API token: "+username, map[string]any{"username": username}, r)
 }

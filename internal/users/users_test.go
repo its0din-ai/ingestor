@@ -248,3 +248,37 @@ func TestDeleteRemovesUserDataAndSessions(t *testing.T) {
 		t.Fatal("session row should be deleted")
 	}
 }
+
+func TestCreateTokenValueRejectsDuplicateAndRollsBack(t *testing.T) {
+	conn := openTestDB(t)
+	alice, err := Create(conn, "alice", "strong-password-123", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := Create(conn, "bob", "strong-password-123", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bobOld, _, err := CreateToken(conn, bob.ID, "api", testSecret())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const shared = "$$securePlAiNt0k3n1337!!"
+	if _, err := CreateTokenValue(conn, alice.ID, "", shared, testSecret()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateTokenValue(conn, bob.ID, "", shared, testSecret()); err == nil {
+		t.Fatal("duplicate token hash must be rejected")
+	}
+
+	// Alice keeps the value; Bob's failed replace must not lose his token.
+	owner, ok := AuthenticateToken(conn, shared)
+	if !ok || owner.ID != alice.ID {
+		t.Fatalf("shared value owner = %+v, ok = %v; want alice", owner, ok)
+	}
+	if owner, ok := AuthenticateToken(conn, bobOld); !ok || owner.ID != bob.ID {
+		t.Fatalf("bob's previous token was lost: %+v, ok = %v", owner, ok)
+	}
+}

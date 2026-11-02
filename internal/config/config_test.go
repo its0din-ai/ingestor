@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joho/godotenv"
+
 	"github.com/encrypt0r/ingestor/internal/db"
 	"github.com/encrypt0r/ingestor/internal/users"
 )
@@ -389,5 +391,41 @@ func TestDurationEnv(t *testing.T) {
 	t.Setenv("session_ttl", "0")
 	if got := durationEnv("session_ttl", 24*time.Hour); got != 0 {
 		t.Fatalf("0 should be honored (disable), got %v", got)
+	}
+}
+
+func TestBearerTokensRoundTripSpecialChars(t *testing.T) {
+	exp := time.Date(2027, 6, 1, 0, 0, 0, 0, time.UTC)
+	want := []BearerToken{
+		{Token: `p@ssw0rd!#$%^&*()_+-[]{};:'"<>?/`, Label: "alice"},
+		{Token: "second-token-1234"},
+		{Token: "expiring-token-12", ExpiresAt: exp},
+	}
+	raw := serializeBearerTokens(want)
+
+	assertSameTokens(t, parseBearerTokens(raw), want)
+
+	// The same string must survive a write/read of .env, which is how the
+	// server reloads the token list after a restart.
+	t.Chdir(t.TempDir())
+	if err := godotenv.Write(map[string]string{"bearer_tokens": raw}, ".env"); err != nil {
+		t.Fatal(err)
+	}
+	values, err := godotenv.Read(".env")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSameTokens(t, parseBearerTokens(values["bearer_tokens"]), want)
+}
+
+func assertSameTokens(t *testing.T, got, want []BearerToken) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("parsed %d tokens, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i].Token != want[i].Token || got[i].Label != want[i].Label || !got[i].ExpiresAt.Equal(want[i].ExpiresAt) {
+			t.Fatalf("token %d = %+v, want %+v", i, got[i], want[i])
+		}
 	}
 }

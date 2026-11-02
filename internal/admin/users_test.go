@@ -24,6 +24,11 @@ func testHandler(t *testing.T) (*Handler, *sql.DB) {
 	t.Setenv("admin_password", "super-password-123")
 	t.Setenv("admin_username", "admin")
 	t.Setenv("upload_dir", "uploads")
+	// SetBearerTokens updates the process environment so later config
+	// refreshes see the new list. Reset it per test so one test's tokens do
+	// not leak into the next.
+	t.Setenv("bearer_tokens", "")
+	t.Setenv("bearer_token", "")
 
 	dir := t.TempDir()
 	t.Chdir(dir)

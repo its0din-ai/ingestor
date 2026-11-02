@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/encrypt0r/ingestor/internal/audit"
 	"github.com/encrypt0r/ingestor/internal/config"
 	"github.com/encrypt0r/ingestor/internal/db"
+	"github.com/encrypt0r/ingestor/internal/ratelimit"
 	"github.com/encrypt0r/ingestor/internal/users"
 )
 
@@ -48,7 +50,7 @@ func TestSingleUserBearerIgnoresPerUserTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := Bearer(cfg, conn, audit.New(conn))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := Bearer(cfg, conn, audit.New(conn), nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	send := func(token string) int {
@@ -64,5 +66,52 @@ func TestSingleUserBearerIgnoresPerUserTokens(t *testing.T) {
 	}
 	if code := send("legacy-token-value"); code != http.StatusOK {
 		t.Fatalf("legacy token status = %d, want 200", code)
+	}
+}
+
+func TestBearerFailureRateLimit(t *testing.T) {
+	t.Setenv("jwt_secret", strings.Repeat("k", 64))
+	t.Setenv("admin_username", "admin")
+	t.Setenv("admin_password", "single-password-123")
+	t.Setenv("SINGLE_USER", "")
+	t.Setenv("bearer_tokens", "good-token-value")
+	t.Setenv("bearer_token", "")
+	t.Setenv("upload_dir", "uploads")
+	t.Chdir(t.TempDir())
+
+	conn, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	cfg, err := config.Load(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h := Bearer(cfg, conn, audit.New(conn), ratelimit.New(2, time.Minute))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	send := func(token string) int {
+		req := httptest.NewRequest(http.MethodPost, "/upload", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	if code := send("wrong-one"); code != http.StatusUnauthorized {
+		t.Fatalf("first failure = %d, want 401", code)
+	}
+	if code := send("wrong-two"); code != http.StatusUnauthorized {
+		t.Fatalf("second failure = %d, want 401", code)
+	}
+	if code := send("wrong-three"); code != http.StatusTooManyRequests {
+		t.Fatalf("third failure = %d, want 429", code)
+	}
+	// Successful authentication must not be throttled by earlier failures.
+	if code := send("good-token-value"); code != http.StatusOK {
+		t.Fatalf("valid token = %d, want 200", code)
 	}
 }
