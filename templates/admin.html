@@ -192,17 +192,22 @@ textarea{min-height:120px;resize:vertical}
 .sidebar .foot .sidebar-toggle svg{width:18px;height:18px;transition:transform .18s ease}
 .sidebar.collapsed .foot .sidebar-toggle svg{transform:rotate(180deg)}
 .sidebar .foot .theme-toggle svg,.sidebar .foot a svg{width:18px;height:18px}
-.who{display:flex;align-items:center;gap:12px;padding:8px 10px;margin-bottom:6px;border-radius:12px;background:var(--surface-2)}
+.who{display:flex;align-items:center;gap:12px;min-height:52px;padding:8px 10px;margin-bottom:6px;border-radius:12px;background:var(--surface-2)}
 .avatar{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:var(--primary);color:var(--on-primary);font-size:14px;font-weight:500;text-transform:uppercase;flex-shrink:0}
 .who-meta{display:flex;flex-direction:column;min-width:0}
 .who-name{color:var(--ink);font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .who-role{color:var(--muted);font-size:11px;text-transform:capitalize}
-.version{padding:6px 14px 0;color:var(--muted);font-family:var(--mono);font-size:11px}
+.version{padding:6px 14px 0;color:var(--muted);font-family:var(--mono);font-size:11px;line-height:16px;white-space:nowrap;overflow:hidden}
 .sidebar.collapsed{width:72px}
 .sidebar.collapsed .brand{justify-content:center;padding:20px 8px 14px}
-.sidebar.collapsed .brand-name,.sidebar.collapsed .nav a span,.sidebar.collapsed .foot .theme-toggle span,.sidebar.collapsed .foot .sidebar-toggle span,.sidebar.collapsed .foot a span,.sidebar.collapsed .who,.sidebar.collapsed .version{display:none}
+.sidebar.collapsed .brand-name,.sidebar.collapsed .nav a span,.sidebar.collapsed .foot .theme-toggle span,.sidebar.collapsed .foot .sidebar-toggle span,.sidebar.collapsed .foot a span{display:none}
+/* Keep the avatar tile and version in the rail so the footer controls never
+   shift between the expanded and collapsed states. */
+.sidebar.collapsed .who{justify-content:center;padding:8px 0}
+.sidebar.collapsed .who-meta{display:none}
+.sidebar.collapsed .version-label{visibility:hidden}
 .sidebar.collapsed .nav a{justify-content:center;padding:0}
-.sidebar.collapsed .foot{padding:12px 8px}
+.sidebar.collapsed .foot{padding:12px 8px 16px}
 .sidebar.collapsed .foot .theme-toggle,.sidebar.collapsed .foot .sidebar-toggle,.sidebar.collapsed .foot a{justify-content:center;padding:0}
 
 /* ---- Main / top app bar ---- */
@@ -371,9 +376,12 @@ textarea{min-height:120px;resize:vertical}
 @media (max-width:760px){
   .sidebar{width:72px}
   .sidebar .brand{justify-content:center;padding:20px 8px 14px}
-  .sidebar .brand-name,.sidebar .nav a span,.sidebar .foot .theme-toggle span,.sidebar .foot .sidebar-toggle span,.sidebar .foot a span,.who,.version{display:none}
+  .sidebar .brand-name,.sidebar .nav a span,.sidebar .foot .theme-toggle span,.sidebar .foot .sidebar-toggle span,.sidebar .foot a span{display:none}
+  .sidebar .who{justify-content:center;padding:8px 0}
+  .sidebar .who-meta{display:none}
+  .sidebar .version-label{visibility:hidden}
   .sidebar .nav a{justify-content:center;padding:0}
-  .sidebar .foot{padding:12px 8px}
+  .sidebar .foot{padding:12px 8px 16px}
   .sidebar .foot .theme-toggle,.sidebar .foot .sidebar-toggle,.sidebar .foot a{justify-content:center;padding:0}
   .main{padding:0 0 24px}
   .main > div[id^="view-"]{padding:0 16px}
@@ -515,7 +523,7 @@ function animateView(view) {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 6-6 6 6 6"/></svg>
       <span>Collapse</span>
     </button>
-    <div class="version">v{{.Version}}</div>
+    <div class="version" title="v{{.Version}}"><span class="version-label">v{{.Version}}</span></div>
   </div>
 </div>
 

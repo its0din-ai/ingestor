@@ -39,6 +39,10 @@ Releases are annotated git tags named `vMAJOR.MINOR.PATCH`.
 - Sign-out now uses a power icon (the old door/arrow read as an expand
   control when the sidebar was icon-only), and the sidebar toggle mirrors
   its chevron and switches its label to "Expand sidebar" while collapsed.
+- Keep the account avatar (without name/role) in the collapsed rail and hide
+  only the version label with `visibility`, leaving the version box and all
+  footer geometry untouched; the theme, sign-out, and expand controls keep
+  the same vertical position instead of jumping between states.
 
 ### Fixed
 
