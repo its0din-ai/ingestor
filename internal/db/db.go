@@ -398,6 +398,47 @@ func DeleteUploadRecord(conn *sql.DB, userID int64, storedName string) error {
 	return err
 }
 
+// RenameStored moves every upload-history row and the public grant for a
+// stored file to its new name. Both tables are updated in one transaction so a
+// renamed file never loses its uploader/source metadata or its public link.
+func RenameStored(conn *sql.DB, userID int64, oldName, newName string) error {
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(
+		`UPDATE upload_history SET stored_name = ? WHERE user_id = ? AND stored_name = ?`,
+		newName, userID, oldName,
+	); err != nil {
+		return err
+	}
+
+	var public int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM public_files WHERE user_id = ? AND stored_name = ?`,
+		userID, oldName,
+	).Scan(&public); err != nil {
+		return err
+	}
+	if public > 0 {
+		if _, err := tx.Exec(
+			`INSERT OR IGNORE INTO public_files (user_id, stored_name) VALUES (?, ?)`,
+			userID, newName,
+		); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM public_files WHERE user_id = ? AND stored_name = ?`,
+		userID, oldName,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // SetUploadQuarantined updates the quarantine flag of the stored file name.
 // It is used when an admin quarantines or releases a file from the UI.
 func SetUploadQuarantined(conn *sql.DB, userID int64, storedName string, quarantined bool) error {

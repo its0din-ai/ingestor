@@ -116,6 +116,7 @@ func main() {
 	dashMux.HandleFunc("GET /dashboard/download", adminHandler.Download)
 	dashMux.HandleFunc("GET /dashboard/read", adminHandler.Read)
 	dashMux.HandleFunc("POST /dashboard/delete", adminHandler.Delete)
+	dashMux.HandleFunc("POST /dashboard/rename", adminHandler.Rename)
 	dashMux.HandleFunc("POST /dashboard/quarantine", adminHandler.Quarantine)
 	dashMux.HandleFunc("POST /dashboard/release", adminHandler.Release)
 	dashMux.HandleFunc("POST /dashboard/public", adminHandler.MarkPublic)

@@ -8,7 +8,7 @@ Secure file upload server for airgapped environments and offensive engagements. 
 - Multipart and raw body uploads
 - Random-suffix storage for API uploads, original-name storage for browser uploads
 - Extension based quarantine with a `.quarantined` suffix
-- Web dashboard with file browser, search, text preview, download, delete, quarantine and release
+- Web dashboard with file browser, search, text preview, rename, download, delete, quarantine and release
 - Public share links that do not require authentication
 - Audit log for logins, uploads, reads, downloads, settings changes, shares, and file actions
 - Disk usage monitor
@@ -172,7 +172,7 @@ Dashboard uploads use the session-authenticated endpoint `POST /dashboard/upload
 
 The dashboard is session authenticated and CSRF protected.
 
-- Files - browser uploads, search, text preview, download, delete, quarantine, release, and public sharing
+- Files - browser uploads, search, text preview, rename, download, delete, quarantine, release, and public sharing
 - Exfil - the same actions for files uploaded through the API
 - Settings - change the upload directory, max upload size, quarantine extensions, and the current account password
 - Tokens - manage the workspace token list, or rotate a personal token in multi-user mode

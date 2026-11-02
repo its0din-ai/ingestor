@@ -622,12 +622,12 @@ function animateView(view) {
 
       <h2 id="docs-features">Web Features</h2>
       <ul>
-        <li><strong>Files</strong> — browser uploads (drag-and-drop with progress), search, text previews, download, quarantine/release, public sharing, and delete, with per-file status and uploader IP. Shows a live disk-usage monitor (uploads / used / total, % free).</li>
+        <li><strong>Files</strong> — browser uploads (drag-and-drop with progress), search, text previews, rename, download, quarantine/release, public sharing, and delete, with per-file status and uploader IP. Shows a live disk-usage monitor (uploads / used / total, % free).</li>
         <li><strong>Exfil</strong> — the same file actions for files uploaded via the API (<code>/upload</code>), kept separate so browser uploads and token uploads are easy to tell apart.</li>
         <li><strong>Settings</strong> — hot-reload upload directory, max upload size, and quarantine extensions (superadmin), and change your own password. Changing a password logs out that account's sessions.</li>
         {{if not .SingleUser}}<li><strong>Users</strong> — superadmin only: create accounts, set storage quotas, disable or delete users, inspect file metadata, and wipe storage. Passwords are changed by each user from Settings; the superadmin cannot reset them or access user file content. The superadmin only browses the shared workspace.</li>{{end}}
         <li><strong>Tokens</strong> — {{if .SingleUser}}the superadmin manages the workspace's API tokens.{{else}}regular users get one personal API token, masked by default in the Tokens view. The superadmin manages the workspace's API tokens.{{end}}</li>
-        <li><strong>Audit</strong> — paginated log of every login, upload, read, download, quarantine/release, public-share access, settings change, and file action, with client IP and User-Agent, pruned after the configured retention (default 30 days). Click a remote IP to open its <code>ipinfo.io</code> lookup in a new tab. Actions received through the CF proxy are labeled <code>via cf-proxy</code> in their summary.</li>
+        <li><strong>Audit</strong> — paginated log of every login, upload, read, download, rename, quarantine/release, public-share access, settings change, and file action, with client IP and User-Agent, pruned after the configured retention (default 30 days). Click a remote IP to open its <code>ipinfo.io</code> lookup in a new tab. Actions received through the CF proxy are labeled <code>via cf-proxy</code> in their summary.</li>
         <li><strong>Dark / light theme</strong> and a collapsible sidebar — toggled from the sidebar, persisted in your browser.</li>
       </ul>
 
@@ -780,6 +780,27 @@ function animateView(view) {
     </div>
   </div>
 </div>
+
+<div class="modal-overlay" id="rename-modal">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head">
+      <h3>Rename file</h3>
+      <button class="modal-close" onclick="closeRename()">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label>New name</label>
+        <input type="text" id="rename-input" autocomplete="off" spellcheck="false"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();submitRename();}">
+      </div>
+      <p class="hint" id="rename-hint" style="margin-top:.4rem"></p>
+      <div class="row-actions" style="margin-top:1.1rem">
+        <button class="btn btn-ghost" onclick="closeRename()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitRename()">Rename</button>
+      </div>
+    </div>
+  </div>
+</div>
 {{end}}
 
 {{if ne .View "login"}}
@@ -910,6 +931,7 @@ function fileRowHTML(f) {
       (f.quarantined
         ? '<button class="icon-btn" onclick="setQuarantine(this)" data-action="release" data-name="' + esc(f.name) + '">release</button>'
         : '<button class="icon-btn" onclick="setQuarantine(this)" data-action="quarantine" data-name="' + esc(f.name) + '">quarantine</button>') +
+      '<button class="icon-btn" onclick="renameFile(this)" data-name="' + esc(f.name) + '">rename</button>' +
       (f.readable ? '<button class="icon-btn" onclick="readFile(this)" data-name="' + esc(f.name) + '">read</button>' : '') +
       '<a class="icon-btn" href="/dashboard/download?name=' + encodeURIComponent(f.name) + '">download</a>' +
       '<button class="icon-btn" onclick="delFile(this)" data-name="' + esc(f.name) + '" style="color:var(--danger)">delete</button>' +
@@ -1087,6 +1109,7 @@ document.getElementById('read-modal').addEventListener('click', e => {
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   closeReader();
+  closeRename();
   confirmDialog(false);
 });
 
@@ -1112,6 +1135,53 @@ function askConfirm(message, opts) {
 
 document.getElementById('confirm-modal').addEventListener('click', e => {
   if (e.target === e.currentTarget) confirmDialog(false);
+});
+
+let renameSource = null;
+
+function renameFile(btn) {
+  renameSource = btn.dataset.name;
+  const input = document.getElementById('rename-input');
+  const hint = document.getElementById('rename-hint');
+  const quarantined = renameSource.endsWith('.quarantined');
+  // The server re-appends the quarantine suffix, so show the editable base.
+  input.value = quarantined ? renameSource.slice(0, -'.quarantined'.length) : renameSource;
+  hint.textContent = quarantined ? 'Quarantined files stay quarantined after renaming.' : '';
+  document.getElementById('rename-modal').classList.add('open');
+  input.focus();
+  input.select();
+}
+
+function closeRename() {
+  renameSource = null;
+  document.getElementById('rename-modal').classList.remove('open');
+}
+
+async function submitRename() {
+  if (!renameSource) return;
+  const to = document.getElementById('rename-input').value.trim();
+  if (!to) { toast('Enter a file name', true); return; }
+  try {
+    const res = await fetch('/dashboard/rename', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': csrf},
+      body: 'name=' + encodeURIComponent(renameSource) + '&to=' + encodeURIComponent(to)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      toast('File renamed');
+      closeRename();
+      loadFiles();
+    } else {
+      toast(data.message || 'Rename failed', true);
+    }
+  } catch (e) {
+    toast('Rename failed', true);
+  }
+}
+
+document.getElementById('rename-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeRename();
 });
 
 let uploadQueue = [];

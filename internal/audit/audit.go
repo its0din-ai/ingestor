@@ -23,6 +23,7 @@ const (
 	ActionDownload         Action = "download"
 	ActionRead             Action = "read"
 	ActionDelete           Action = "delete"
+	ActionRename           Action = "rename"
 	ActionQuarantine       Action = "quarantine"
 	ActionRelease          Action = "release"
 	ActionMarkPublic       Action = "mark_public"
@@ -133,6 +134,13 @@ func (l *Logger) Read(r *http.Request, name string) {
 
 func (l *Logger) Delete(r *http.Request, name string) {
 	l.record(ActionDelete, "file deleted: "+name, map[string]any{"stored_name": name}, r)
+}
+
+func (l *Logger) Rename(r *http.Request, oldName, newName string) {
+	l.record(ActionRename, "file renamed: "+oldName+" -> "+newName, map[string]any{
+		"stored_name": oldName,
+		"new_name":    newName,
+	}, r)
 }
 
 func (l *Logger) Quarantine(r *http.Request, name string) {

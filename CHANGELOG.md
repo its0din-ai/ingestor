@@ -8,6 +8,13 @@ Releases are annotated git tags named `vMAJOR.MINOR.PATCH`.
 
 ## [Unreleased]
 
+### Added
+
+- Rename files from the dashboard. Renames never overwrite an existing file
+  and are race-safe: concurrent renames of one file resolve to a single
+  winner, and two files racing for one name cannot destroy either payload.
+  Quarantine state, upload history, and public links follow the new name.
+
 ## [3.11.0] - 2026-11-02
 
 ### Added

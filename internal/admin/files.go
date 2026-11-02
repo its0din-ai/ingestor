@@ -1,6 +1,9 @@
 package admin
 
 import (
+	"errors"
+	"io/fs"
+	"log/slog"
 	"math"
 	"net/http"
 	"os"
@@ -17,6 +20,10 @@ import (
 	"github.com/encrypt0r/ingestor/internal/users"
 	"github.com/encrypt0r/ingestor/internal/web"
 )
+
+// maxStoredNameBytes matches the common filesystem limit for a single path
+// component. Longer names are rejected before touching the filesystem.
+const maxStoredNameBytes = 255
 
 // scope resolves the storage directory for the session user. Superadmins
 // manage the unowned legacy root; their content endpoints are still refused
@@ -402,7 +409,140 @@ func (h *Handler) Release(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Rename renames a stored file without replacing an existing file. The
+// operation is safe under concurrency: the file is moved with a no-replace
+// primitive, so when two sessions race on the same source exactly one rename
+// wins and the loser gets 404 (source already moved) or 409 (target already
+// taken). Nothing is ever silently overwritten.
+func (h *Handler) Rename(w http.ResponseWriter, r *http.Request) {
+	dir, userID, _, ok := h.scope(r)
+	if !ok {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{Status: "error", Message: "forbidden"})
+		return
+	}
+
+	oldName := r.FormValue("name")
+	oldPath, ok := h.storedPath(dir, oldName)
+	if !ok {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "invalid file name",
+		})
+		return
+	}
+
+	newName, newPath, ok := renameTarget(dir, oldName, r.FormValue("to"))
+	if !ok {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "invalid new file name",
+		})
+		return
+	}
+	if newName == oldName {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "the file already has that name",
+		})
+		return
+	}
+	if !h.fileExists(oldPath) {
+		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
+			Status:  "error",
+			Message: "file not found",
+		})
+		return
+	}
+
+	if err := renameNoReplace(oldPath, newPath); err != nil {
+		switch {
+		case errors.Is(err, fs.ErrExist):
+			web.JSON(w, http.StatusConflict, web.ErrorResponse{
+				Status:  "error",
+				Message: "a file with that name already exists",
+			})
+		case errors.Is(err, fs.ErrNotExist):
+			// Another rename or delete moved the source between the check
+			// above and the atomic rename.
+			web.JSON(w, http.StatusNotFound, web.ErrorResponse{
+				Status:  "error",
+				Message: "file not found",
+			})
+		default:
+			slog.Warn("failed to rename file", "from", oldName, "to", newName, "err", err)
+			web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
+				Status:  "error",
+				Message: "failed to rename file",
+			})
+		}
+		return
+	}
+
+	// The bytes are already moved; a bookkeeping failure must not report the
+	// rename as failed. Log it so the stale row can be repaired.
+	if err := db.RenameStored(h.conn, userID, oldName, newName); err != nil {
+		slog.Warn("failed to move file records after rename", "from", oldName, "to", newName, "err", err)
+	}
+	h.auditLog.Rename(r, oldName, newName)
+
+	web.JSON(w, http.StatusOK, map[string]string{
+		"status":  "ok",
+		"message": "File renamed",
+		"name":    newName,
+	})
+}
+
+// renameTarget validates a requested new name and returns the final stored
+// name and path. Quarantine state is preserved across a rename: a quarantined
+// file always keeps the suffix, and a released file cannot be renamed to look
+// quarantined by hand.
+func renameTarget(dir, oldName, requested string) (name, path string, ok bool) {
+	quarantined := strings.HasSuffix(oldName, ".quarantined")
+	requested = strings.TrimSpace(requested)
+	requested = strings.TrimSuffix(requested, ".quarantined")
+	requested = strings.TrimSpace(requested)
+	if requested == "" || len(requested) > maxStoredNameBytes {
+		return "", "", false
+	}
+	if quarantined {
+		requested += ".quarantined"
+	}
+	path, ok = resolveStoredPath(dir, requested)
+	if !ok {
+		return "", "", false
+	}
+	return requested, path, true
+}
+
+// renameNoReplace renames src to dst and never replaces an existing dst.
+//
+// os.Rename silently overwrites on POSIX, so a Stat-then-Rename check is racy:
+// two concurrent renames can clobber each other. The destination is therefore
+// claimed first with O_EXCL, which the kernel resolves atomically: exactly one
+// racing caller can create dst, everyone else gets fs.ErrExist. The claim is a
+// zero-byte placeholder that the rename immediately replaces. If the rename
+// fails the placeholder is removed again, so a failed call leaves no trace.
+//
+// (Hard links were considered for this, but concurrent unlink of the same name
+// returns success more than once on macOS APFS, so they cannot arbitrate.)
+func renameNoReplace(src, dst string) error {
+	f, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(dst)
+		return err
+	}
+	if err := os.Rename(src, dst); err != nil {
+		_ = os.Remove(dst)
+		return err
+	}
+	return nil
+}
+
 // fileExists reports whether path is a regular (non-symlink) file. Symlinks
+
 // are rejected so a compromised upload directory cannot redirect reads to
 // arbitrary files on disk.
 func (h *Handler) fileExists(path string) bool {
