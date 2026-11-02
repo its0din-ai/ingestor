@@ -36,6 +36,9 @@ Releases are annotated git tags named `vMAJOR.MINOR.PATCH`.
   Material light/dark palette instead of ooblivion's purple scheme.
 - Added the dotted texture to the logged-in shell as the app background
   (without the login orbs), replacing the flat background.
+- Sign-out now uses a power icon (the old door/arrow read as an expand
+  control when the sidebar was icon-only), and the sidebar toggle mirrors
+  its chevron and switches its label to "Expand sidebar" while collapsed.
 
 ### Fixed
 
