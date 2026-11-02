@@ -28,6 +28,13 @@ Releases are annotated git tags named `vMAJOR.MINOR.PATCH`.
   silently redrawn, so the endpoint cannot confirm whether a value exists,
   and failed bearer authentication is rate limited per client IP.
 
+### Changed
+
+- Restyled the login page after the ooblivion auth screen: dotted backdrop,
+  drifting blue/green orbs, a frosted card, a centered shield brand mark, a
+  topbar theme toggle, and a deployed-version footer, using ingestor's
+  Material light/dark palette instead of ooblivion's purple scheme.
+
 ### Fixed
 
 - `?name=` now sets the **exact** stored filename for multipart uploads
