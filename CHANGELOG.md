@@ -8,11 +8,16 @@ Releases are annotated git tags named `vMAJOR.MINOR.PATCH`.
 
 ## [Unreleased]
 
+## [3.13.0] - 2026-11-02
+
 ### Changed
 
 - Collapse the per-file row actions into a single **Action** menu (share /
   unshare, quarantine / release, read, edit, rename, download, delete), with
   delete highlighted in red.
+- `docker-compose.yml` now supports host bind mounts via
+  `INGESTOR_DATA_DIR` / `INGESTOR_UPLOADS_DIR` alongside the default
+  Docker-managed named volumes.
 
 ## [3.12.0] - 2026-11-02
 
