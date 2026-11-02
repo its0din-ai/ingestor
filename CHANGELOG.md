@@ -28,6 +28,15 @@ Releases are annotated git tags named `vMAJOR.MINOR.PATCH`.
   silently redrawn, so the endpoint cannot confirm whether a value exists,
   and failed bearer authentication is rate limited per client IP.
 
+### Fixed
+
+- `?name=` now sets the **exact** stored filename for multipart uploads
+  (`curl -F`) as well as raw bodies. Previously the query was ignored whenever
+  the part had its own `Content-Disposition` filename. A named upload is
+  stored verbatim and refuses to overwrite an existing file with `409`; without
+  the query the part/header name is used and API uploads keep the random
+  suffix. The query is still sanitized.
+
 ## [3.11.0] - 2026-11-02
 
 ### Added

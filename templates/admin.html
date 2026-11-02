@@ -620,7 +620,7 @@ function animateView(view) {
       <pre><code>curl -H "Authorization: Bearer $TOKEN" -F "file=@myfile.txt" {{.BaseURL}}/upload</code></pre>
       <pre><code>curl -H "Authorization: Bearer $TOKEN" -T myfile.txt {{.BaseURL}}/upload</code></pre>
       <pre><code>curl -H "Authorization: Bearer $TOKEN" --data-binary @myfile.txt "{{.BaseURL}}/upload?name=myfile.txt"</code></pre>
-      <p>The original filename is resolved from the multipart part, a <code>Content-Disposition</code> header, the <code>?name=</code> query param, or falls back to <code>upload-&lt;unix-timestamp&gt;</code>.</p>
+      <p>A non-empty <code>?name=</code> query stores exactly that sanitized name (an existing file returns <code>409</code> and is never overwritten). Without it, the multipart part filename or a <code>Content-Disposition</code> header is used; API uploads then get a random suffix, and the final fallback is <code>upload-&lt;unix-timestamp&gt;</code>. The query therefore works for raw bodies, <code>curl -F</code>, and dashboard uploads alike.</p>
 
       <h3>Response</h3>
       <pre><code>{

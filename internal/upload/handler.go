@@ -144,7 +144,8 @@ func (h *Handler) handleMultipart(w http.ResponseWriter, r *http.Request, maxByt
 		if part.FileName() == "" {
 			continue
 		}
-		h.save(w, r, part, sanitizeName(part.FileName()), maxBytes, false, "api", o)
+		_, named := queryUploadName(r)
+		h.save(w, r, part, uploadName(r, part.FileName()), maxBytes, named, "api", o)
 		_ = part.Close()
 		return
 	}
@@ -153,11 +154,12 @@ func (h *Handler) handleMultipart(w http.ResponseWriter, r *http.Request, maxByt
 }
 
 func (h *Handler) handleRaw(w http.ResponseWriter, r *http.Request, maxBytes int64, o owner) {
-	name := sanitizeName(rawFilename(r))
+	name := uploadName(r, rawFilename(r))
 	if name == "" {
 		name = "upload-" + strconv.FormatInt(time.Now().Unix(), 10)
 	}
-	h.save(w, r, r.Body, name, maxBytes, false, "api", o)
+	_, named := queryUploadName(r)
+	h.save(w, r, r.Body, name, maxBytes, named, "api", o)
 }
 
 // UploadBrowser stores a multipart file using its original name (no random
@@ -191,7 +193,7 @@ func (h *Handler) UploadBrowser(w http.ResponseWriter, r *http.Request) {
 		if part.FileName() == "" {
 			continue
 		}
-		h.save(w, r, part, sanitizeName(part.FileName()), maxBytes, true, "browser", o)
+		h.save(w, r, part, uploadName(r, part.FileName()), maxBytes, true, "browser", o)
 		_ = part.Close()
 		return
 	}
@@ -199,10 +201,37 @@ func (h *Handler) UploadBrowser(w http.ResponseWriter, r *http.Request) {
 	h.fail(w, http.StatusBadRequest, "no file part found")
 }
 
-func rawFilename(r *http.Request) string {
-	if name := r.URL.Query().Get("name"); name != "" {
+// uploadName resolves the name a stored file should use. A non-empty ?name=
+// query always wins, for raw, multipart, and dashboard uploads, so the same
+// override works with curl -F regardless of the part's Content-Disposition
+// filename. When the query is absent (or sanitizes to nothing) the part/header
+// filename is used. Both candidates go through sanitizeName, so path
+// separators and control bytes cannot escape the upload directory.
+func uploadName(r *http.Request, fallback string) string {
+	if name, ok := queryUploadName(r); ok {
 		return name
 	}
+	return sanitizeName(fallback)
+}
+
+// queryUploadName returns the sanitized ?name= override and whether it is a
+// usable name. A usable query name also means "store exactly this name" rather
+// than the randomized name used for unnamed API uploads.
+func queryUploadName(r *http.Request) (string, bool) {
+	q := r.URL.Query().Get("name")
+	if q == "" {
+		return "", false
+	}
+	name := sanitizeName(q)
+	if name == "" {
+		return "", false
+	}
+	return name, true
+}
+
+// rawFilename returns the filename from the request's Content-Disposition
+// header. The ?name= query is handled by uploadName, which takes precedence.
+func rawFilename(r *http.Request) string {
 	if disp := r.Header.Get("Content-Disposition"); disp != "" {
 		_, params, err := mime.ParseMediaType(disp)
 		if err == nil && params["filename"] != "" {

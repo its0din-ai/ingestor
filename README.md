@@ -154,7 +154,7 @@ curl -H "Authorization: Bearer $TOKEN" \
   "http://127.0.0.1:8080/?name=report.txt"
 ```
 
-For raw uploads, the filename comes from the `name` query parameter or the `Content-Disposition` header. API uploads get a random suffix before the extension, so concurrent uploads never overwrite each other.
+When a non-empty `name` query parameter is present it sets the **exact** stored filename for every upload method; an existing file returns `409` and is never overwritten. Without it, the multipart part filename or `Content-Disposition` header is used, and API uploads get a random suffix before the extension so concurrent unnamed uploads never collide.
 
 Successful response:
 
