@@ -8,6 +8,12 @@ Releases are annotated git tags named `vMAJOR.MINOR.PATCH`.
 
 ## [Unreleased]
 
+### Changed
+
+- Collapse the per-file row actions into a single **Action** menu (share /
+  unshare, quarantine / release, read, edit, rename, download, delete), with
+  delete highlighted in red.
+
 ## [3.12.0] - 2026-11-02
 
 ### Added

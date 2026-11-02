@@ -264,6 +264,15 @@ textarea{min-height:120px;resize:vertical}
 .row-actions{display:flex;gap:4px;justify-content:flex-end;flex-wrap:wrap}
 .icon-btn{display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 12px;border-radius:8px;border:none;background:transparent;color:var(--primary);font-size:12px;font-weight:500;transition:background .15s}
 .icon-btn:hover{background:var(--primary-container);text-decoration:none}
+.action-trigger{display:inline-flex;align-items:center;gap:6px}
+.action-trigger svg{width:14px;height:14px}
+.action-menu{position:fixed;z-index:70;display:none;min-width:190px;max-width:calc(100vw - 24px);padding:6px;background:var(--surface);border:1px solid var(--outline);border-radius:12px;box-shadow:var(--shadow-3)}
+.action-menu.open{display:block}
+.action-menu button,.action-menu a{display:flex;align-items:center;width:100%;height:36px;padding:0 12px;border:0;border-radius:8px;background:transparent;color:var(--ink);font-size:13px;font-weight:500;text-align:left;text-decoration:none;white-space:nowrap}
+.action-menu button:hover,.action-menu a:hover{background:var(--surface-2);text-decoration:none}
+.action-menu .danger{color:var(--red)}
+.action-menu .danger:hover{background:var(--red-container)}
+.action-menu .menu-sep{height:1px;margin:4px 6px;background:var(--outline)}
 .bulk-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;margin:16px 24px;background:var(--surface);border:1px solid var(--outline);border-radius:12px;box-shadow:var(--shadow-1)}
 .bulk-count{margin-right:auto;color:var(--muted);font-size:13px}
 .bulk-bar button:disabled{opacity:.38;cursor:default}
@@ -975,6 +984,7 @@ function animateView(view) {
     </div>
   </div>
 </div>
+<div id="action-menu" class="action-menu" role="menu" aria-label="File actions"></div>
 {{end}}
 
 {{if ne .View "login"}}
@@ -1096,22 +1106,123 @@ function fileRowHTML(f) {
     '<td>' + (f.quarantined ? '<span class="badge badge-q">quarantined</span>' : (f.public ? '<span class="badge badge-public">public</span>' : '<span class="badge badge-ok">ok</span>')) + '</td>' +
     '<td>' + esc(f.uploader_ip || '') + '</td>' +
     '<td><div class="row-actions">' +
-      (!f.quarantined
-        ? (f.public
-            ? '<button class="icon-btn" onclick="copyPublicLink(this)" data-name="' + esc(f.name) + '" title="Copy public link">link</button>' +
-              '<button class="icon-btn" onclick="setPublic(this)" data-action="private" data-name="' + esc(f.name) + '">unshare</button>'
-            : '<button class="icon-btn" onclick="setPublic(this)" data-action="public" data-name="' + esc(f.name) + '">share</button>')
-        : '') +
-      (f.quarantined
-        ? '<button class="icon-btn" onclick="setQuarantine(this)" data-action="release" data-name="' + esc(f.name) + '">release</button>'
-        : '<button class="icon-btn" onclick="setQuarantine(this)" data-action="quarantine" data-name="' + esc(f.name) + '">quarantine</button>') +
-      '<button class="icon-btn" onclick="renameFile(this)" data-name="' + esc(f.name) + '">rename</button>' +
-      (f.readable ? '<button class="icon-btn" onclick="readFile(this)" data-name="' + esc(f.name) + '">read</button>' : '') +
-      (f.editable ? '<button class="icon-btn" onclick="editFile(this)" data-name="' + esc(f.name) + '">edit</button>' : '') +
-      '<a class="icon-btn" href="/dashboard/download?name=' + encodeURIComponent(f.name) + '">download</a>' +
-      '<button class="icon-btn" onclick="delFile(this)" data-name="' + esc(f.name) + '" style="color:var(--danger)">delete</button>' +
+      '<button class="icon-btn action-trigger" onclick="openActionMenu(this)" aria-haspopup="menu" aria-expanded="false"' +
+        ' data-name="' + esc(f.name) + '"' +
+        ' data-quarantined="' + (f.quarantined ? '1' : '') + '"' +
+        ' data-public="' + (f.public ? '1' : '') + '"' +
+        ' data-readable="' + (f.readable ? '1' : '') + '"' +
+        ' data-editable="' + (f.editable ? '1' : '') + '">' +
+        'Action' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>' +
+      '</button>' +
     '</div></td>';
 }
+
+let actionMenuTrigger = null;
+
+function closeActionMenu() {
+  const menu = document.getElementById('action-menu');
+  if (!menu) return;
+  menu.classList.remove('open');
+  menu.innerHTML = '';
+  if (actionMenuTrigger) actionMenuTrigger.setAttribute('aria-expanded', 'false');
+  actionMenuTrigger = null;
+}
+
+function positionActionMenu(trigger, menu) {
+  const r = trigger.getBoundingClientRect();
+  const pad = 8;
+  menu.style.visibility = 'hidden';
+  menu.classList.add('open');
+  const mw = menu.offsetWidth;
+  const mh = menu.offsetHeight;
+  let left = r.right - mw;
+  if (left < pad) left = pad;
+  if (left + mw > window.innerWidth - pad) left = window.innerWidth - mw - pad;
+  let top = r.bottom + 6;
+  if (top + mh > window.innerHeight - pad) top = r.top - mh - 6;
+  if (top < pad) top = pad;
+  menu.style.left = Math.max(pad, left) + 'px';
+  menu.style.top = top + 'px';
+  menu.style.visibility = '';
+}
+
+function openActionMenu(trigger) {
+  const menu = document.getElementById('action-menu');
+  if (!menu) return;
+  if (actionMenuTrigger === trigger && menu.classList.contains('open')) {
+    closeActionMenu();
+    return;
+  }
+  closeActionMenu();
+  actionMenuTrigger = trigger;
+  trigger.setAttribute('aria-expanded', 'true');
+
+  const name = trigger.dataset.name;
+  const quarantined = trigger.dataset.quarantined === '1';
+  const isPublic = trigger.dataset.public === '1';
+  const readable = trigger.dataset.readable === '1';
+  const editable = trigger.dataset.editable === '1';
+
+  const add = (label, fn, data, cls) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.setAttribute('role', 'menuitem');
+    b.textContent = label;
+    if (cls) b.className = cls;
+    b.dataset.name = name;
+    if (data) Object.assign(b.dataset, data);
+    b.addEventListener('click', () => { closeActionMenu(); fn(b); });
+    menu.appendChild(b);
+  };
+  const addSeparator = () => {
+    const s = document.createElement('div');
+    s.className = 'menu-sep';
+    menu.appendChild(s);
+  };
+
+  if (!quarantined) {
+    if (isPublic) {
+      add('Copy public link', copyPublicLink);
+      add('Unshare', setPublic, {action: 'private'});
+    } else {
+      add('Share', setPublic, {action: 'public'});
+    }
+  }
+  if (quarantined) {
+    add('Release', setQuarantine, {action: 'release'});
+  } else {
+    add('Quarantine', setQuarantine, {action: 'quarantine'});
+  }
+  if (readable) add('Read', readFile);
+  if (editable) add('Edit', editFile);
+  add('Rename', renameFile);
+
+  const download = document.createElement('button');
+  download.type = 'button';
+  download.setAttribute('role', 'menuitem');
+  download.textContent = 'Download';
+  download.addEventListener('click', () => {
+    closeActionMenu();
+    window.location.href = '/dashboard/download?name=' + encodeURIComponent(name);
+  });
+  menu.appendChild(download);
+
+  addSeparator();
+  add('Delete', delFile, null, 'danger');
+
+  positionActionMenu(trigger, menu);
+}
+
+document.addEventListener('click', e => {
+  const menu = document.getElementById('action-menu');
+  if (!menu || !menu.classList.contains('open')) return;
+  if (menu.contains(e.target)) return;
+  if (actionMenuTrigger && e.target.closest('.action-trigger') === actionMenuTrigger) return;
+  closeActionMenu();
+});
+window.addEventListener('resize', closeActionMenu);
+window.addEventListener('scroll', closeActionMenu, true);
 
 function appendEmptyRow(bodyId, empty) {
   const body = document.getElementById(bodyId);
@@ -1452,6 +1563,7 @@ document.addEventListener('keydown', e => {
     confirmDialog(false);
     return;
   }
+  closeActionMenu();
   closeReader();
   closeRename();
   closePlainWarning();
