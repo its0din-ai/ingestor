@@ -54,6 +54,40 @@ To build, deploy, and supervise the process in the background:
 
 `deploy.sh` also generates `jwt_secret` when it is missing or too short.
 
+## Docker / GHCR
+
+Prebuilt multi-arch images are published to the GitHub Container Registry:
+
+```text
+ghcr.io/its0din-ai/ingestor:latest
+ghcr.io/its0din-ai/ingestor:3.12.0
+ghcr.io/its0din-ai/ingestor:3.12
+```
+
+The repository ships a `docker-compose.yml` that maps `:8080`, persists SQLite
+in `/data` and uploads in `/app/uploads`, and reads secrets from `.env`:
+
+```sh
+cp .env.example .env
+# set admin_password and jwt_secret (openssl rand -hex 64)
+docker compose up -d
+```
+
+Pin a release or change the published port with environment variables:
+
+```sh
+INGESTOR_IMAGE=ghcr.io/its0din-ai/ingestor:3.12.0 \
+INGESTOR_PORT=8080 docker compose up -d
+```
+
+Compose overrides `host`, `port`, `db_path`, and `upload_dir` for the
+container; everything else (admin credentials, tokens, quotas, proxy settings)
+comes from `.env`. The image runs as the non-root user `10001`; if you use bind
+mounts instead of the named volumes, make `/data` and `/app/uploads` writable
+by that UID. The GHCR package is made public by the publish workflow on the
+first tag push; if a pull asks for credentials, run `docker login ghcr.io` or
+set the package visibility to public under GitHub → Packages.
+
 ## Configuration
 
 All keys live in `.env`. The values are read at startup. Runtime settings such as `upload_dir`, `max_upload_mb`, and `quarantine_extensions` are seeded into SQLite on first boot and can be changed later from the dashboard.

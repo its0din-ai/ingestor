@@ -8,8 +8,15 @@ Releases are annotated git tags named `vMAJOR.MINOR.PATCH`.
 
 ## [Unreleased]
 
+## [3.12.0] - 2026-11-02
+
 ### Added
 
+- Publish container images to GHCR (`ghcr.io/its0din-ai/ingestor`) from a
+  multi-stage Dockerfile, with a `docker-compose.yml` and a GitHub Actions
+  workflow that builds on PRs and pushes versioned + `latest` tags on
+  releases. The image runs as non-root, listens on `:8080`, and persists
+  SQLite in `/data` and uploads in `/app/uploads`.
 - Edit readable text files directly in the browser. Saves use a content-hash
   version and an atomic replace, so a stale editor gets `409` instead of
   overwriting a newer revision; concurrent saves resolve to exactly one
