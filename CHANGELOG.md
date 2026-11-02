@@ -8,15 +8,19 @@ Releases are annotated git tags named `vMAJOR.MINOR.PATCH`.
 
 ## [Unreleased]
 
+## [3.11.0] - 2026-11-02
+
 ### Added
 
 - SINGLE_USER mode and legacy `.env` compatibility (`f7ad22e`).
+- Project README and the security audit report (`AUDIT.md`).
 
 ### Changed
 
 - Adopt Semantic Versioning: annotated `vMAJOR.MINOR.PATCH` tags for
   every release, this changelog, and build-time version stamping from
   `git describe`.
+- Ignore local audit artifacts (`.claude/`, `.security-audit-*`, logs and PIDs).
 
 ## [3.10.0] - 2026-10-22
 

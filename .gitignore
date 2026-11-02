@@ -31,3 +31,8 @@ dist/
 Thumbs.db
 
 resources/
+.security-audit-skill/*
+.security-audit-run/*
+.claude/*
+*.log
+*.pid
