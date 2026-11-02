@@ -15,8 +15,11 @@ services:
     env_file:
       - .env
     volumes:
-      - ingestor-data:/data
-      - ingestor-uploads:/app/uploads
+      # Option 1 (default): Docker-managed named volumes.
+      # Option 2: set these to host paths for bind mounts, e.g.
+      #   INGESTOR_DATA_DIR=./data INGESTOR_UPLOADS_DIR=./uploads
+      - ${INGESTOR_DATA_DIR:-ingestor-data}:/data
+      - ${INGESTOR_UPLOADS_DIR:-ingestor-uploads}:/app/uploads
 
 volumes:
   ingestor-data:

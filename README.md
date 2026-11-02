@@ -64,29 +64,65 @@ ghcr.io/its0din-ai/ingestor:3.12.0
 ghcr.io/its0din-ai/ingestor:3.12
 ```
 
-The repository ships a `docker-compose.yml` that maps `:8080`, persists SQLite
-in `/data` and uploads in `/app/uploads`, and reads secrets from `.env`:
+Create `.env` first; the container reads every setting from it (compose
+overrides `host`, `port`, `db_path`, and `upload_dir`):
 
 ```sh
 cp .env.example .env
 # set admin_password and jwt_secret (openssl rand -hex 64)
+```
+
+### Option 1: Docker-managed volumes (default)
+
+```sh
 docker compose up -d
 ```
 
-Pin a release or change the published port with environment variables:
+Data lives in the `ingestor-data` (SQLite at `/data/ingestor.db`) and
+`ingestor-uploads` (`/app/uploads`) volumes. They survive `docker compose down`
+and are removed only by `docker compose down -v`.
+
+Pin a release or change the published port:
 
 ```sh
 INGESTOR_IMAGE=ghcr.io/its0din-ai/ingestor:3.12.0 \
 INGESTOR_PORT=8080 docker compose up -d
 ```
 
+### Option 2: Host bind mounts
+
+Point the volume variables at host paths instead:
+
+```sh
+mkdir -p ./data ./uploads
+INGESTOR_DATA_DIR=./data \
+INGESTOR_UPLOADS_DIR=./uploads \
+docker compose up -d
+```
+
+The SQLite database is then `./data/ingestor.db` and uploads are in
+`./uploads`. Use absolute paths if you run compose from another directory.
+
+On Linux the image runs as UID/GID `10001`, so make the host directories
+writable by that user:
+
+```sh
+sudo chown -R 10001:10001 ./data ./uploads
+```
+
+On Docker Desktop (macOS/Windows) the file-sharing layer normally handles
+ownership; if the app reports a permission error, chown/chmod the directories
+the same way.
+
+Both options use the same image. Switching layouts requires recreating the
+container (`docker compose down`, then up with the other variables); copy the
+contents between the named volume and the host directory to migrate data.
+
 Compose overrides `host`, `port`, `db_path`, and `upload_dir` for the
 container; everything else (admin credentials, tokens, quotas, proxy settings)
-comes from `.env`. The image runs as the non-root user `10001`; if you use bind
-mounts instead of the named volumes, make `/data` and `/app/uploads` writable
-by that UID. The GHCR package is made public by the publish workflow on the
-first tag push; if a pull asks for credentials, run `docker login ghcr.io` or
-set the package visibility to public under GitHub → Packages.
+comes from `.env`. The GHCR package is public; if a pull asks for credentials,
+run `docker login ghcr.io` or set the package visibility to public under
+GitHub → Packages.
 
 ## Configuration
 
