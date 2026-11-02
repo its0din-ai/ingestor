@@ -194,13 +194,30 @@ Dashboard uploads use the session-authenticated endpoint `POST /dashboard/upload
 
 The dashboard is session authenticated and CSRF protected.
 
-- Files - browser uploads, search, text preview, rename, download, delete, quarantine, release, and public sharing
+- Files - browser uploads, search, text preview, rename, edit text files, download, delete, quarantine, release, and public sharing
 - Exfil - the same actions for files uploaded through the API
 - Settings - change the upload directory, max upload size, quarantine extensions, and the current account password
 - Tokens - manage the workspace token list (random or plain), or rotate a personal token in multi-user mode
 - Users - superadmin only in multi-user mode; create accounts, set quotas, disable, delete, inspect file metadata, and wipe per-user storage
 - Audit - paginated activity log with client IP and user agent
 - Docs - in-app usage reference
+
+### Editing text files
+
+Readable text files up to 1 MiB can be edited in place from the Files or Exfil
+view. The editor loads the file with a content-hash version; saving sends that
+version back and the server only writes when it still matches. If another tab
+or user saves first, the second save gets `409` and the editor asks you to
+reload instead of silently overwriting. Writes are atomic (temp file plus
+rename), so readers never observe a partial file.
+
+An open editor also holds a five-minute lease, renewed every minute while the
+tab is open. Delete, rename, quarantine, and release on that file are refused
+with `409` while another session holds the lease, so the file cannot disappear
+under the editor. Closing the editor or navigating away releases the lease
+immediately; if the tab dies or the network drops, the lease expires. Opening
+the same file again as the same account takes the lease over and invalidates
+the older tab.
 
 ### Public shares
 

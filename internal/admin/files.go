@@ -1,6 +1,9 @@
 package admin
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"log/slog"
@@ -11,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/encrypt0r/ingestor/internal/db"
@@ -24,6 +28,79 @@ import (
 // maxStoredNameBytes matches the common filesystem limit for a single path
 // component. Longer names are rejected before touching the filesystem.
 const maxStoredNameBytes = 255
+
+// maxEditableBytes bounds files that can be edited in the browser. Reading is
+// streamed and unbounded, but the editor loads the whole document into a
+// textarea and sends it back as JSON, so it needs a hard cap.
+const maxEditableBytes = 1 << 20 // 1 MiB
+
+// fileMu serializes file mutations (edit saves, delete, rename, quarantine,
+// release) and the edit-lock map below. Holding it across the check and the
+// filesystem change makes the lease and the mutation atomic with respect to
+// each other, so a delete cannot slip in between "is anyone editing?" and
+// "remove the file".
+var fileMu sync.Mutex
+
+// editLockTTL is how long an editor lease survives without a heartbeat. The
+// browser renews every minute; a closed tab (or a dead network) releases the
+// file within this window.
+const editLockTTL = 5 * time.Minute
+
+type editLock struct {
+	token    string
+	userID   int64
+	username string
+	expires  time.Time
+}
+
+// editLocks maps a cleaned stored-file path to its active editor lease. It is
+// guarded by fileMu.
+var editLocks = map[string]editLock{}
+
+// pruneExpiredLocksLocked drops leases that have passed their TTL. Caller
+// holds fileMu.
+func pruneExpiredLocksLocked(now time.Time) {
+	for key, l := range editLocks {
+		if !now.Before(l.expires) {
+			delete(editLocks, key)
+		}
+	}
+}
+
+// lockHolderLocked returns the username holding a live lease on key. Any live
+// lease blocks a mutation: the editing session must close its editor (or lose
+// the lease) before the file can be deleted, renamed, quarantined, or released.
+// Caller holds fileMu.
+func lockHolderLocked(key string, now time.Time) (string, bool) {
+	l, ok := editLocks[key]
+	if !ok || !now.Before(l.expires) {
+		return "", false
+	}
+	return l.username, true
+}
+
+// otherLockHolderLocked is the open-editor variant: the same account may take
+// its own lease over (a refreshed or second tab), but another account cannot
+// open the file at all.
+func otherLockHolderLocked(key string, userID int64, now time.Time) (string, bool) {
+	l, ok := editLocks[key]
+	if !ok || !now.Before(l.expires) || l.userID == userID {
+		return "", false
+	}
+	return l.username, true
+}
+
+// lockLostLocked reports whether token is still the live lease for key.
+// Caller holds fileMu.
+func lockLostLocked(key, token string, userID int64, now time.Time) bool {
+	l, ok := editLocks[key]
+	return !ok || l.token != token || l.userID != userID || !now.Before(l.expires)
+}
+
+var (
+	errNotText  = errors.New("file is not editable text")
+	errTooLarge = errors.New("file is too large to edit")
+)
 
 // scope resolves the storage directory for the session user. Superadmins
 // manage the unowned legacy root; their content endpoints are still refused
@@ -49,6 +126,7 @@ type fileInfo struct {
 	Quarantined bool      `json:"quarantined"`
 	UploaderIP  string    `json:"uploader_ip"`
 	Readable    bool      `json:"readable"`
+	Editable    bool      `json:"editable"`
 	Public      bool      `json:"public"`
 	Source      string    `json:"source"`
 }
@@ -137,6 +215,7 @@ func (h *Handler) ListFiles(w http.ResponseWriter, r *http.Request) {
 			Quarantined: strings.HasSuffix(e.Name(), ".quarantined"),
 			UploaderIP:  ip,
 			Readable:    readable,
+			Editable:    readable && info.Size() <= maxEditableBytes,
 			Public:      db.IsPublic(h.conn, userID, e.Name()),
 			Source:      src,
 		})
@@ -285,6 +364,410 @@ func (h *Handler) Read(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, path)
 }
 
+// EditDocument returns the current text content of a stored file plus a
+// content-hash version. The version is what SaveDocument compares against, so
+// a stale editor cannot overwrite a newer revision.
+func (h *Handler) EditDocument(w http.ResponseWriter, r *http.Request) {
+	dir, _, _, ok := h.scope(r)
+	if !ok {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{Status: "error", Message: "forbidden"})
+		return
+	}
+	name := r.URL.Query().Get("name")
+	path, ok := h.storedPath(dir, name)
+	if !ok {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "invalid file name",
+		})
+		return
+	}
+	content, version, err := readEditable(path)
+	if err != nil {
+		editReadError(w, err)
+		return
+	}
+	web.JSON(w, http.StatusOK, editDocument{
+		Name:    name,
+		Content: string(content),
+		Version: version,
+		Size:    int64(len(content)),
+	})
+}
+
+type editDocument struct {
+	Name    string `json:"name"`
+	Content string `json:"content"`
+	Version string `json:"version"`
+	Size    int64  `json:"size"`
+}
+
+// OpenEdit acquires an editor lease and returns the current text plus its
+// version. A live lease held by another account blocks the open with 409, so
+// two sessions cannot edit the same file at once. Opening again as the same
+// account takes the lease over and invalidates an older tab.
+func (h *Handler) OpenEdit(w http.ResponseWriter, r *http.Request) {
+	dir, userID, u, ok := h.scope(r)
+	if !ok {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{Status: "error", Message: "forbidden"})
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "invalid request body",
+		})
+		return
+	}
+	path, ok := h.storedPath(dir, req.Name)
+	if !ok {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "invalid file name",
+		})
+		return
+	}
+
+	fileMu.Lock()
+	defer fileMu.Unlock()
+
+	now := time.Now()
+	pruneExpiredLocksLocked(now)
+	if holder, blocked := otherLockHolderLocked(path, userID, now); blocked {
+		web.JSON(w, http.StatusConflict, web.ErrorResponse{
+			Status:  "error",
+			Message: "file is being edited by " + holder,
+		})
+		return
+	}
+	content, version, err := readEditable(path)
+	if err != nil {
+		editReadError(w, err)
+		return
+	}
+	token := randomToken()
+	expires := now.Add(editLockTTL)
+	editLocks[path] = editLock{
+		token:    token,
+		userID:   userID,
+		username: u.Username,
+		expires:  expires,
+	}
+	web.JSON(w, http.StatusOK, editOpenResponse{
+		editDocument: editDocument{
+			Name:    req.Name,
+			Content: string(content),
+			Version: version,
+			Size:    int64(len(content)),
+		},
+		Lock:      token,
+		ExpiresAt: expires.UTC().Format(time.RFC3339),
+	})
+}
+
+type editOpenResponse struct {
+	editDocument
+	Lock      string `json:"lock"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+// RenewEdit extends the editor lease. The browser sends a heartbeat; if the
+// lease was lost (expired or taken over), it gets 409 and must reload.
+func (h *Handler) RenewEdit(w http.ResponseWriter, r *http.Request) {
+	dir, userID, _, ok := h.scope(r)
+	if !ok {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{Status: "error", Message: "forbidden"})
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+		Lock string `json:"lock"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "invalid request body",
+		})
+		return
+	}
+	path, ok := h.storedPath(dir, req.Name)
+	if !ok {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "invalid file name",
+		})
+		return
+	}
+
+	fileMu.Lock()
+	defer fileMu.Unlock()
+
+	now := time.Now()
+	if lockLostLocked(path, req.Lock, userID, now) {
+		web.JSON(w, http.StatusConflict, web.ErrorResponse{
+			Status:  "error",
+			Message: "edit lock expired or lost; reopen the file",
+		})
+		return
+	}
+	l := editLocks[path]
+	l.expires = now.Add(editLockTTL)
+	editLocks[path] = l
+	web.JSON(w, http.StatusOK, map[string]string{
+		"status":     "ok",
+		"expires_at": l.expires.UTC().Format(time.RFC3339),
+	})
+}
+
+// CloseEdit releases the editor lease. It is idempotent: a missing or
+// mismatched lease is ignored, so a late unload beacon cannot harm a newer
+// editor that already took the file over.
+func (h *Handler) CloseEdit(w http.ResponseWriter, r *http.Request) {
+	dir, userID, _, ok := h.scope(r)
+	if !ok {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{Status: "error", Message: "forbidden"})
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+		Lock string `json:"lock"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "invalid request body",
+		})
+		return
+	}
+	path, ok := h.storedPath(dir, req.Name)
+	if !ok {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "invalid file name",
+		})
+		return
+	}
+
+	fileMu.Lock()
+	defer fileMu.Unlock()
+	if l, exists := editLocks[path]; exists && l.token == req.Lock && l.userID == userID {
+		delete(editLocks, path)
+	}
+	web.JSON(w, http.StatusOK, web.ErrorResponse{Status: "ok", Message: "Editor closed"})
+}
+
+// SaveDocument writes edited text back to a stored file. It requires the
+// caller's editor lease and a matching content version, so a stale tab, a
+// taken-over lease, or an externally changed file all fail with 409 instead of
+// clobbering newer content.
+func (h *Handler) SaveDocument(w http.ResponseWriter, r *http.Request) {
+	dir, userID, _, ok := h.scope(r)
+	if !ok {
+		web.JSON(w, http.StatusForbidden, web.ErrorResponse{Status: "error", Message: "forbidden"})
+		return
+	}
+
+	// JSON adds escaping overhead on top of the document itself; the decoded
+	// content is capped separately below.
+	r.Body = http.MaxBytesReader(w, r.Body, maxEditableBytes*6+4096)
+	var req struct {
+		Name    string `json:"name"`
+		Content string `json:"content"`
+		Version string `json:"version"`
+		Lock    string `json:"lock"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			web.JSON(w, http.StatusRequestEntityTooLarge, web.ErrorResponse{
+				Status:  "error",
+				Message: "file is too large to edit",
+			})
+			return
+		}
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "invalid request body",
+		})
+		return
+	}
+
+	path, ok := h.storedPath(dir, req.Name)
+	if !ok {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "invalid file name",
+		})
+		return
+	}
+	if req.Version == "" {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "missing file version",
+		})
+		return
+	}
+	if req.Lock == "" {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
+			Status:  "error",
+			Message: "missing edit lock",
+		})
+		return
+	}
+	content := []byte(req.Content)
+	if len(content) > maxEditableBytes {
+		web.JSON(w, http.StatusRequestEntityTooLarge, web.ErrorResponse{
+			Status:  "error",
+			Message: "file is too large to edit",
+		})
+		return
+	}
+	if !filetype.IsTextBytes(content) {
+		web.JSON(w, http.StatusUnsupportedMediaType, web.ErrorResponse{
+			Status:  "error",
+			Message: "edited content must be plain text",
+		})
+		return
+	}
+
+	fileMu.Lock()
+	defer fileMu.Unlock()
+
+	now := time.Now()
+	if lockLostLocked(path, req.Lock, userID, now) {
+		web.JSON(w, http.StatusConflict, web.ErrorResponse{
+			Status:  "error",
+			Message: "edit lock expired or lost; reload the file before saving",
+		})
+		return
+	}
+
+	old, current, err := readEditable(path)
+	if err != nil {
+		editReadError(w, err)
+		return
+	}
+	if current != req.Version {
+		web.JSON(w, http.StatusConflict, web.ErrorResponse{
+			Status:  "error",
+			Message: "file changed since it was opened; reload it before saving",
+		})
+		return
+	}
+	if err := writeFileAtomic(path, content); err != nil {
+		slog.Warn("failed to save edited file", "name", req.Name, "err", err)
+		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
+			Status:  "error",
+			Message: "failed to save file",
+		})
+		return
+	}
+
+	// Keep the lease alive for a client that continues editing after a save.
+	l := editLocks[path]
+	l.expires = now.Add(editLockTTL)
+	editLocks[path] = l
+
+	h.auditLog.Edit(r, req.Name, int64(len(old)), int64(len(content)))
+	web.JSON(w, http.StatusOK, map[string]string{
+		"status":  "ok",
+		"message": "File saved",
+		"version": contentVersion(content),
+	})
+}
+
+// readEditable loads a regular text file and returns its content plus version.
+// Directories and symlinks are treated as missing, matching the read handlers.
+func readEditable(path string) ([]byte, string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, "", err
+	}
+	if info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, "", os.ErrNotExist
+	}
+	if info.Size() > maxEditableBytes {
+		return nil, "", errTooLarge
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "", err
+	}
+	if !filetype.IsTextBytes(content) {
+		return nil, "", errNotText
+	}
+	return content, contentVersion(content), nil
+}
+
+// contentVersion is the optimistic-concurrency token: a digest of the exact
+// bytes the editor loaded.
+func contentVersion(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// writeFileAtomic replaces path with content via a temp file in the same
+// directory, so readers either see the old file or the new one, never a
+// partially written edit. The original permission bits are preserved.
+func writeFileAtomic(path string, content []byte) error {
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+		mode = info.Mode().Perm()
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".ingestor-edit-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+
+	if _, err := tmp.Write(content); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, mode); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
+// editReadError maps readEditable failures onto HTTP responses.
+func editReadError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
+			Status:  "error",
+			Message: "file not found",
+		})
+	case errors.Is(err, errTooLarge):
+		web.JSON(w, http.StatusRequestEntityTooLarge, web.ErrorResponse{
+			Status:  "error",
+			Message: "file is too large to edit",
+		})
+	case errors.Is(err, errNotText):
+		web.JSON(w, http.StatusUnsupportedMediaType, web.ErrorResponse{
+			Status:  "error",
+			Message: "file is not editable text",
+		})
+	default:
+		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
+			Status:  "error",
+			Message: "failed to read file",
+		})
+	}
+}
+
 // Quarantine renames a stored file to append the .quarantined suffix so it
 // cannot be executed or served as its original type.
 func (h *Handler) Quarantine(w http.ResponseWriter, r *http.Request) {
@@ -309,7 +792,17 @@ func (h *Handler) Quarantine(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	fileMu.Lock()
+	if holder, blocked := lockHolderLocked(path, time.Now()); blocked {
+		fileMu.Unlock()
+		web.JSON(w, http.StatusConflict, web.ErrorResponse{
+			Status:  "error",
+			Message: "file is being edited by " + holder,
+		})
+		return
+	}
 	if !h.fileExists(path) {
+		fileMu.Unlock()
 		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
 			Status:  "error",
 			Message: "file not found",
@@ -319,6 +812,7 @@ func (h *Handler) Quarantine(w http.ResponseWriter, r *http.Request) {
 
 	target := path + ".quarantined"
 	if _, err := os.Stat(target); err == nil {
+		fileMu.Unlock()
 		web.JSON(w, http.StatusConflict, web.ErrorResponse{
 			Status:  "error",
 			Message: "a quarantined file with that name already exists",
@@ -326,12 +820,15 @@ func (h *Handler) Quarantine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := os.Rename(path, target); err != nil {
+		fileMu.Unlock()
 		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
 			Status:  "error",
 			Message: "failed to quarantine file",
 		})
 		return
 	}
+	delete(editLocks, path)
+	fileMu.Unlock()
 
 	_ = db.SetUploadQuarantined(h.conn, userID, name, true)
 	if db.IsPublic(h.conn, userID, name) {
@@ -368,14 +865,6 @@ func (h *Handler) Release(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if !h.fileExists(path) {
-		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
-			Status:  "error",
-			Message: "file not found",
-		})
-		return
-	}
-
 	base := strings.TrimSuffix(name, ".quarantined")
 	basePath, ok := h.storedPath(dir, base)
 	if !ok {
@@ -385,7 +874,26 @@ func (h *Handler) Release(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+
+	fileMu.Lock()
+	if holder, blocked := lockHolderLocked(path, time.Now()); blocked {
+		fileMu.Unlock()
+		web.JSON(w, http.StatusConflict, web.ErrorResponse{
+			Status:  "error",
+			Message: "file is being edited by " + holder,
+		})
+		return
+	}
+	if !h.fileExists(path) {
+		fileMu.Unlock()
+		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
+			Status:  "error",
+			Message: "file not found",
+		})
+		return
+	}
 	if _, err := os.Stat(basePath); err == nil {
+		fileMu.Unlock()
 		web.JSON(w, http.StatusConflict, web.ErrorResponse{
 			Status:  "error",
 			Message: "the original file name is already taken",
@@ -393,12 +901,15 @@ func (h *Handler) Release(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := os.Rename(path, basePath); err != nil {
+		fileMu.Unlock()
 		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
 			Status:  "error",
 			Message: "failed to release file",
 		})
 		return
 	}
+	delete(editLocks, path)
+	fileMu.Unlock()
 
 	_ = db.SetUploadQuarantined(h.conn, userID, base, false)
 	h.auditLog.Release(r, base)
@@ -446,7 +957,17 @@ func (h *Handler) Rename(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	fileMu.Lock()
+	if holder, blocked := lockHolderLocked(oldPath, time.Now()); blocked {
+		fileMu.Unlock()
+		web.JSON(w, http.StatusConflict, web.ErrorResponse{
+			Status:  "error",
+			Message: "file is being edited by " + holder,
+		})
+		return
+	}
 	if !h.fileExists(oldPath) {
+		fileMu.Unlock()
 		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
 			Status:  "error",
 			Message: "file not found",
@@ -454,14 +975,20 @@ func (h *Handler) Rename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := renameNoReplace(oldPath, newPath); err != nil {
+	renameErr := renameNoReplace(oldPath, newPath)
+	if renameErr == nil {
+		delete(editLocks, oldPath)
+	}
+	fileMu.Unlock()
+
+	if renameErr != nil {
 		switch {
-		case errors.Is(err, fs.ErrExist):
+		case errors.Is(renameErr, fs.ErrExist):
 			web.JSON(w, http.StatusConflict, web.ErrorResponse{
 				Status:  "error",
 				Message: "a file with that name already exists",
 			})
-		case errors.Is(err, fs.ErrNotExist):
+		case errors.Is(renameErr, fs.ErrNotExist):
 			// Another rename or delete moved the source between the check
 			// above and the atomic rename.
 			web.JSON(w, http.StatusNotFound, web.ErrorResponse{
@@ -469,7 +996,7 @@ func (h *Handler) Rename(w http.ResponseWriter, r *http.Request) {
 				Message: "file not found",
 			})
 		default:
-			slog.Warn("failed to rename file", "from", oldName, "to", newName, "err", err)
+			slog.Warn("failed to rename file", "from", oldName, "to", newName, "err", renameErr)
 			web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
 				Status:  "error",
 				Message: "failed to rename file",
@@ -717,7 +1244,18 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fileMu.Lock()
+	now := time.Now()
+	if holder, blocked := lockHolderLocked(path, now); blocked {
+		fileMu.Unlock()
+		web.JSON(w, http.StatusConflict, web.ErrorResponse{
+			Status:  "error",
+			Message: "file is being edited by " + holder,
+		})
+		return
+	}
 	if !h.fileExists(path) {
+		fileMu.Unlock()
 		web.JSON(w, http.StatusNotFound, web.ErrorResponse{
 			Status:  "error",
 			Message: "file not found",
@@ -726,12 +1264,15 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := os.Remove(path); err != nil {
+		fileMu.Unlock()
 		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
 			Status:  "error",
 			Message: "failed to delete file",
 		})
 		return
 	}
+	delete(editLocks, path)
+	fileMu.Unlock()
 	// A deleted file must not leave behind a public grant that a future
 	// upload with the same name would inherit.
 	_ = db.MarkPrivate(h.conn, userID, filepath.Base(path))

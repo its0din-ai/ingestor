@@ -10,6 +10,13 @@ Releases are annotated git tags named `vMAJOR.MINOR.PATCH`.
 
 ### Added
 
+- Edit readable text files directly in the browser. Saves use a content-hash
+  version and an atomic replace, so a stale editor gets `409` instead of
+  overwriting a newer revision; concurrent saves resolve to exactly one
+  winner. An open editor also holds a five-minute lease (renewed by a
+  heartbeat) that makes delete, rename, quarantine, and release return `409`
+  while another session is editing, so the file cannot vanish under the
+  editor. Edits are capped at 1 MiB and recorded in the audit log.
 - Rename files from the dashboard. Renames never overwrite an existing file
   and are race-safe: concurrent renames of one file resolve to a single
   winner, and two files racing for one name cannot destroy either payload.

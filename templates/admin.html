@@ -237,6 +237,10 @@ textarea{min-height:120px;resize:vertical}
 /* ---- Dialogs ---- */
 .modal-overlay{position:fixed;inset:0;z-index:80;display:none;align-items:center;justify-content:center;padding:24px;background:rgba(32,33,36,.5)}
 .modal-overlay.open{display:flex}
+/* Confirmations must stack above an open editor or form. */
+#confirm-modal{z-index:90}
+.editor{width:100%;min-height:50vh;resize:vertical;padding:12px;border:1px solid var(--outline);border-radius:var(--radius);background:var(--surface-2);color:var(--ink);font-family:var(--mono);font-size:13px;line-height:1.5;tab-size:2}
+.editor:focus{outline:2px solid var(--primary);outline-offset:1px}
 .modal{display:flex;flex-direction:column;width:100%;max-width:900px;max-height:85vh;background:var(--surface);border-radius:16px;box-shadow:var(--shadow-3);overflow:hidden}
 .modal-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:20px 24px 12px}
 .modal-head h3{font-size:20px;font-weight:500;word-break:break-all}
@@ -630,12 +634,12 @@ function animateView(view) {
 
       <h2 id="docs-features">Web Features</h2>
       <ul>
-        <li><strong>Files</strong> — browser uploads (drag-and-drop with progress), search, text previews, rename, download, quarantine/release, public sharing, and delete, with per-file status and uploader IP. Shows a live disk-usage monitor (uploads / used / total, % free).</li>
+        <li><strong>Files</strong> — browser uploads (drag-and-drop with progress), search, text previews, rename, inline text editing with a conflict-checked lease, download, quarantine/release, public sharing, and delete, with per-file status and uploader IP. Shows a live disk-usage monitor (uploads / used / total, % free).</li>
         <li><strong>Exfil</strong> — the same file actions for files uploaded via the API (<code>/upload</code>), kept separate so browser uploads and token uploads are easy to tell apart.</li>
         <li><strong>Settings</strong> — hot-reload upload directory, max upload size, and quarantine extensions (superadmin), and change your own password. Changing a password logs out that account's sessions.</li>
         {{if not .SingleUser}}<li><strong>Users</strong> — superadmin only: create accounts, set storage quotas, disable or delete users, inspect file metadata, and wipe storage. Passwords are changed by each user from Settings; the superadmin cannot reset them or access user file content. The superadmin only browses the shared workspace.</li>{{end}}
         <li><strong>Tokens</strong> — {{if .SingleUser}}the superadmin manages the workspace's API tokens.{{else}}regular users get one personal API token, masked by default in the Tokens view. The superadmin manages the workspace's API tokens.{{end}}</li>
-        <li><strong>Audit</strong> — paginated log of every login, upload, read, download, rename, quarantine/release, public-share access, settings change, and file action, with client IP and User-Agent, pruned after the configured retention (default 30 days). Click a remote IP to open its <code>ipinfo.io</code> lookup in a new tab. Actions received through the CF proxy are labeled <code>via cf-proxy</code> in their summary.</li>
+        <li><strong>Audit</strong> — paginated log of every login, upload, read, edit, download, rename, quarantine/release, public-share access, settings change, and file action, with client IP and User-Agent, pruned after the configured retention (default 30 days). Click a remote IP to open its <code>ipinfo.io</code> lookup in a new tab. Actions received through the CF proxy are labeled <code>via cf-proxy</code> in their summary.</li>
         <li><strong>Dark / light theme</strong> and a collapsible sidebar — toggled from the sidebar, persisted in your browser.</li>
       </ul>
 
@@ -683,6 +687,24 @@ function animateView(view) {
     </div>
     <div class="modal-body">
       <pre id="read-content"></pre>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="edit-modal">
+  <div class="modal" style="max-width:900px">
+    <div class="modal-head">
+      <h3>Edit <span id="edit-name" class="mono"></span></h3>
+      <button class="modal-close" onclick="closeEditor()">Close</button>
+    </div>
+    <div class="modal-body">
+      <p class="hint" id="edit-status" style="margin-bottom:.6rem"></p>
+      <textarea id="edit-content" class="editor" spellcheck="false" autocomplete="off"></textarea>
+      <div class="row-actions" style="margin-top:1rem">
+        <button class="btn btn-ghost" onclick="closeEditor()">Cancel</button>
+        <button class="btn btn-ghost" id="edit-reload" style="display:none" onclick="reloadEdit()">Reload latest</button>
+        <button class="btn btn-primary" id="edit-save" onclick="saveEdit()">Save</button>
+      </div>
     </div>
   </div>
 </div>
@@ -990,6 +1012,7 @@ function fileRowHTML(f) {
         : '<button class="icon-btn" onclick="setQuarantine(this)" data-action="quarantine" data-name="' + esc(f.name) + '">quarantine</button>') +
       '<button class="icon-btn" onclick="renameFile(this)" data-name="' + esc(f.name) + '">rename</button>' +
       (f.readable ? '<button class="icon-btn" onclick="readFile(this)" data-name="' + esc(f.name) + '">read</button>' : '') +
+      (f.editable ? '<button class="icon-btn" onclick="editFile(this)" data-name="' + esc(f.name) + '">edit</button>' : '') +
       '<a class="icon-btn" href="/dashboard/download?name=' + encodeURIComponent(f.name) + '">download</a>' +
       '<button class="icon-btn" onclick="delFile(this)" data-name="' + esc(f.name) + '" style="color:var(--danger)">delete</button>' +
     '</div></td>';
@@ -1125,7 +1148,11 @@ async function delFile(btn) {
       body: 'name=' + encodeURIComponent(name)
     });
     if (res.ok) { toast('File deleted'); loadFiles(); }
-    else toast('Delete failed', true);
+    else {
+      let msg = 'Delete failed';
+      try { msg = (await res.json()).message || msg; } catch (e) {}
+      toast(msg, true);
+    }
   } catch (e) {
     toast('Delete failed', true);
   }
@@ -1163,13 +1190,178 @@ function closeReader() {
 document.getElementById('read-modal').addEventListener('click', e => {
   if (e.target === e.currentTarget) closeReader();
 });
+
+let editName = null;
+let editVersion = null;
+let editLock = null;
+let editHeartbeat = null;
+let editDirty = false;
+let editConflict = false;
+
+async function editFile(btn) {
+  await openEdit(btn.dataset.name);
+}
+
+async function openEdit(name) {
+  try {
+    const res = await fetch('/dashboard/api/edit/open', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+      body: JSON.stringify({name: name})
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(data.message || 'Failed to open editor', true); return false; }
+    openEditor(data.name || name, data.content, data.version, data.lock);
+    return true;
+  } catch (e) {
+    toast('Failed to open editor', true);
+    return false;
+  }
+}
+
+function openEditor(name, content, version, lock) {
+  stopEditHeartbeat();
+  editName = name;
+  editVersion = version;
+  editLock = lock;
+  editDirty = false;
+  editConflict = false;
+  document.getElementById('edit-name').textContent = name;
+  document.getElementById('edit-content').value = content;
+  document.getElementById('edit-status').textContent = '';
+  document.getElementById('edit-reload').style.display = 'none';
+  document.getElementById('edit-save').disabled = false;
+  document.getElementById('edit-modal').classList.add('open');
+  document.getElementById('edit-content').focus();
+  // Renew the server-side lease before it can expire while the tab is idle.
+  editHeartbeat = setInterval(renewEditLock, 60000);
+}
+
+function stopEditHeartbeat() {
+  if (editHeartbeat) {
+    clearInterval(editHeartbeat);
+    editHeartbeat = null;
+  }
+}
+
+function editLost(message) {
+  releaseEditLock();
+  stopEditHeartbeat();
+  editLock = null;
+  editConflict = true;
+  document.getElementById('edit-save').disabled = true;
+  document.getElementById('edit-reload').style.display = '';
+  document.getElementById('edit-status').textContent = message;
+}
+
+async function renewEditLock() {
+  if (!editName || !editLock) return;
+  try {
+    const res = await fetch('/dashboard/api/edit/renew', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+      body: JSON.stringify({name: editName, lock: editLock})
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      editLost(data.message || 'Edit lock lost. Reload before saving.');
+    }
+  } catch (e) {
+    // Transient network failure: keep the interval; the server lease has a
+    // five-minute grace period before another session can take the file.
+  }
+}
+
+function releaseEditLock() {
+  if (!editName || !editLock) return;
+  try {
+    fetch('/dashboard/api/edit/close', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+      body: JSON.stringify({name: editName, lock: editLock}),
+      keepalive: true
+    });
+  } catch (e) {}
+}
+
+function closeEditor() {
+  if (editDirty) {
+    askConfirm('Discard unsaved changes?', {
+      title: 'Discard changes',
+      okText: 'Discard'
+    }).then(ok => { if (ok) closeEditorNow(); });
+    return;
+  }
+  closeEditorNow();
+}
+
+function closeEditorNow() {
+  releaseEditLock();
+  stopEditHeartbeat();
+  editName = null;
+  editVersion = null;
+  editLock = null;
+  editDirty = false;
+  editConflict = false;
+  document.getElementById('edit-modal').classList.remove('open');
+}
+
+async function saveEdit() {
+  if (!editName || !editLock) return;
+  if (editConflict) { toast('Reload the latest version first', true); return; }
+  const ta = document.getElementById('edit-content');
+  try {
+    const res = await fetch('/dashboard/api/edit', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
+      body: JSON.stringify({name: editName, content: ta.value, version: editVersion, lock: editLock})
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      editVersion = data.version;
+      editDirty = false;
+      document.getElementById('edit-status').textContent = 'Saved';
+      toast('File saved');
+      loadFiles();
+    } else if (res.status === 409) {
+      // The lease was taken over/expired or the file changed elsewhere.
+      editLost(data.message || 'Someone else changed this file. Reload before saving.');
+      toast(data.message || 'Reload to continue', true);
+    } else {
+      toast(data.message || 'Save failed', true);
+    }
+  } catch (e) {
+    toast('Save failed', true);
+  }
+}
+
+async function reloadEdit() {
+  if (!editName) return;
+  if (await openEdit(editName)) toast('Reloaded latest version');
+}
+
+document.getElementById('edit-content').addEventListener('input', () => { editDirty = true; });
+document.getElementById('edit-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeEditor();
+});
+
+// Best-effort release when the tab is closed or navigated away. The lease TTL
+// is the fallback if the beacon cannot be delivered.
+window.addEventListener('pagehide', () => {
+  if (editName && editLock) releaseEditLock();
+});
+
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
+  if (document.getElementById('confirm-modal').classList.contains('open')) {
+    confirmDialog(false);
+    return;
+  }
   closeReader();
   closeRename();
   closePlainWarning();
   closePlainTokenCreate();
-  confirmDialog(false);
+  closeEditor();
 });
 
 let confirmCb = null;
@@ -1352,7 +1544,11 @@ async function setQuarantine(btn) {
       body: 'name=' + encodeURIComponent(name)
     });
     if (res.ok) { toast('File ' + verb.toLowerCase() + 'd'); loadFiles(); }
-    else toast(verb + ' failed', true);
+    else {
+      let msg = verb + ' failed';
+      try { msg = (await res.json()).message || msg; } catch (e) {}
+      toast(msg, true);
+    }
   } catch (e) {
     toast(verb + ' failed', true);
   }

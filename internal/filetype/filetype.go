@@ -29,6 +29,12 @@ func IsText(path string) (bool, error) {
 	return sampleIsText(buf[:n]), nil
 }
 
+// IsTextBytes applies the same heuristic to an in-memory buffer, including
+// the UTF-8 and control-character checks.
+func IsTextBytes(b []byte) bool {
+	return sampleIsText(b)
+}
+
 // sampleIsText applies the text heuristic to a leading sample of a file.
 // Empty samples are treated as text; anything containing NUL bytes, invalid
 // UTF-8, or more than a small fraction of non-whitespace control characters
