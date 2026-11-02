@@ -59,7 +59,12 @@ build() {
   ensure_jwt_secret
   echo "==> Building static binary ($(go version | awk '{print $3}'))"
   mkdir -p "$BUILD_DIR"
-  CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$BUILD_DIR/$APP" .
+  local version
+  version="$(git -C "$PROJECT_ROOT" describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo "0.0.0-dev")"
+  echo "==> Version: $version"
+  CGO_ENABLED=0 go build -trimpath \
+    -ldflags="-s -w -X github.com/encrypt0r/ingestor/internal/version.Version=$version" \
+    -o "$BUILD_DIR/$APP" .
   echo "==> Copying templates"
   rm -rf "$BUILD_DIR/$TEMPLATES"
   cp -R "$TEMPLATES" "$BUILD_DIR/"
