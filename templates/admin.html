@@ -65,6 +65,16 @@ html.dark{
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{height:100vh;display:flex;background:var(--bg);color:var(--ink);font-family:var(--font);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;transition:background .18s,color .18s}
+/* Logged-in shell: the same dotted texture as the login backdrop, without the orbs. */
+body.app-body{
+  background-color:var(--bg);
+  background-image:radial-gradient(color-mix(in srgb,var(--ink) 12%,transparent) 1px,transparent 1px);
+  background-size:26px 26px;
+  background-attachment:fixed;
+}
+html.dark body.app-body{
+  background-image:radial-gradient(color-mix(in srgb,var(--ink) 9%,transparent) 1px,transparent 1px);
+}
 a{color:var(--primary);text-decoration:none}
 a:hover{text-decoration:underline}
 button{cursor:pointer;font:inherit;border:none;background:none;color:inherit}
@@ -378,7 +388,7 @@ textarea{min-height:120px;resize:vertical}
 }
 </style>
 </head>
-<body>
+<body{{if ne .View "login"}} class="app-body"{{end}}>
 <script src="/static/anime.min.js"></script>
 <script>
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;

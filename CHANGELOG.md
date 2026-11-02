@@ -34,6 +34,8 @@ Releases are annotated git tags named `vMAJOR.MINOR.PATCH`.
   drifting blue/green orbs, a frosted card, a centered shield brand mark, a
   topbar theme toggle, and a deployed-version footer, using ingestor's
   Material light/dark palette instead of ooblivion's purple scheme.
+- Added the dotted texture to the logged-in shell as the app background
+  (without the login orbs), replacing the flat background.
 
 ### Fixed
 
