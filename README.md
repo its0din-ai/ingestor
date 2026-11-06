@@ -1,6 +1,7 @@
 # ingestor
 
 Secure file upload server for airgapped environments and offensive engagements. It is a single Go binary with an embedded web dashboard, a bearer-token upload API, quarantine rules, public share links, an audit log, and optional multi-user accounts. Data lives in SQLite plus the upload directory, and no C compiler is required.
+<img src="https://oasted.encrypt0r.net/sentry.png"/>
 
 ## Features
 
