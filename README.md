@@ -393,4 +393,3 @@ go test ./...
 
 The version is defined in `internal/version/version.go`.
 
-![](https://oasted.encrypt0r.net/sentry.png?for=ingestor-traffic)
