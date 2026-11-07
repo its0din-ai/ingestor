@@ -8,6 +8,16 @@ Releases are annotated git tags named `vMAJOR.MINOR.PATCH`.
 
 ## [Unreleased]
 
+## [3.13.1] - 2026-11-07
+
+### Changed
+
+- Container publishing now runs only for the newest completed
+  `vMAJOR.MINOR.PATCH` tag. Branch pushes and pull requests no longer build
+  or publish images.
+- Rewrote the README with a product banner, project rationale, concise quick
+  start, configuration reference, upload API examples, and operations guide.
+
 ## [3.13.0] - 2026-11-02
 
 ### Changed
