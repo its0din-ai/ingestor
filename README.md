@@ -11,6 +11,12 @@
 
 **ingestor** is a self-hosted file ingestion server for airgapped environments and offensive engagements. It ships as a single Go binary with an embedded dashboard, a bearer-token upload API, quarantine rules, public share links, audit logging, and optional multi-user accounts. State lives in SQLite and a local upload directory—no external services and no CGO.
 
+## Why this project was built
+
+1. **Replace risky open directories.** Advanced persistent threats (APTs) often host payloads in open directories. Those directories are uncontrolled and easy to expose or lose; ingestor provides a dedicated ingestion server for payload delivery.
+2. **Know what actually happened.** Without delivery telemetry, operators cannot tell whether a payload was delivered, blocked by the blue team, or never delivered at all. The upload response and audit log make each outcome visible.
+3. **Exfiltrate simply and securely.** ingestor makes file exfiltration convenient and protects it with bearer-token authentication instead of brittle ad hoc tooling.
+
 ## Features
 
 - Single static binary with an embedded web dashboard
