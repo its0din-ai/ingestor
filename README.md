@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/assets/banner.svg" alt="ingestor — secure file ingestion for airgapped environments" width="100%">
+  <img src=".github/assets/banner.svg" alt="ingestor  -  secure file ingestion for airgapped environments" width="100%">
 </p>
 
 <p align="center">
@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/platform-linux%2Famd64%20%7C%20linux%2Farm64-0f172a?style=flat-square" alt="Platforms">
 </p>
 
-**ingestor** is a self-hosted file ingestion server for airgapped environments and offensive engagements. It ships as a single Go binary with an embedded dashboard, a bearer-token upload API, quarantine rules, public share links, audit logging, and optional multi-user accounts. State lives in SQLite and a local upload directory—no external services and no CGO.
+**ingestor** is a self-hosted file ingestion server for airgapped environments and offensive engagements. It ships as a single Go binary with an embedded dashboard, a bearer-token upload API, quarantine rules, public share links, audit logging, and optional multi-user accounts. State lives in SQLite and a local upload directory - no external services and no CGO.
 
 ## Why this project was built
 
@@ -147,13 +147,13 @@ Dashboard uploads use `POST /dashboard/upload`, keep the original filename, and 
 
 ## Dashboard
 
-- **Files** — browser uploads, search, text preview, edit, rename, download, delete, quarantine, release, and share
-- **Exfil** — the same actions for files received through the API
-- **Settings** — upload directory, upload size, quarantine extensions, and account password
-- **Tokens** — workspace tokens or a rotated personal token
-- **Users** — superadmin account management, quotas, and storage actions
-- **Audit** — paginated activity log with client IP and user agent
-- **Docs** — in-app usage reference
+- **Files**  -  browser uploads, search, text preview, edit, rename, download, delete, quarantine, release, and share
+- **Exfil**  -  the same actions for files received through the API
+- **Settings**  -  upload directory, upload size, quarantine extensions, and account password
+- **Tokens**  -  workspace tokens or a rotated personal token
+- **Users**  -  superadmin account management, quotas, and storage actions
+- **Audit**  -  paginated activity log with client IP and user agent
+- **Docs**  -  in-app usage reference
 
 Public shares are created from any non-quarantined file and served at `GET /pub?name=STORED_NAME` (add `&u=USER_ID` for a regular user's storage). Quarantined files cannot be shared.
 
