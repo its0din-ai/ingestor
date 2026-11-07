@@ -118,6 +118,22 @@ h1,h2,h3{font-family:var(--font);font-weight:500;letter-spacing:-.01em}
 html.dark .login-orb{opacity:.32}
 html.dark .login-orb-bottom{opacity:.24}
 
+/* Software rendering fallback (VMs without a GPU/WebGL, low-end devices):
+   large blur() filters and backdrop-filter are very expensive to rasterize
+   without GPU acceleration. Use a cheap radial-gradient glow and a solid
+   card instead, and keep the orb drift disabled. */
+html.low-graphics .login-orb{filter:none;will-change:auto;animation:none;opacity:.5;background:radial-gradient(circle at center,var(--google-blue) 0%,color-mix(in srgb,var(--google-blue) 55%,transparent) 45%,transparent 72%)}
+html.low-graphics .login-orb-bottom{opacity:.32;background:radial-gradient(circle at center,var(--google-green) 0%,color-mix(in srgb,var(--google-green) 55%,transparent) 45%,transparent 72%)}
+html.dark.low-graphics .login-orb{opacity:.3}
+html.dark.low-graphics .login-orb-bottom{opacity:.22}
+html.low-graphics .login-card{-webkit-backdrop-filter:none;backdrop-filter:none;background:var(--surface)}
+html.dark.low-graphics .login-card{background:var(--surface)}
+@media (prefers-reduced-transparency:reduce){
+  .login-card,html.dark .login-card{-webkit-backdrop-filter:none;backdrop-filter:none;background:var(--surface)}
+  .login-orb{filter:none;will-change:auto;animation:none;background:radial-gradient(circle at center,var(--google-blue) 0%,color-mix(in srgb,var(--google-blue) 55%,transparent) 45%,transparent 72%)}
+  .login-orb-bottom{background:radial-gradient(circle at center,var(--google-green) 0%,color-mix(in srgb,var(--google-green) 55%,transparent) 45%,transparent 72%)}
+}
+
 .login-topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:14px 20px}
 .login-brand{display:inline-flex;align-items:center;gap:10px;color:var(--ink);font-weight:500;letter-spacing:-.01em}
 .login-brand:hover{text-decoration:none}
@@ -405,11 +421,45 @@ textarea{min-height:120px;resize:vertical}
   *,*::before,*::after{animation:none!important;transition:none!important}
 }
 </style>
+<script>
+// Mark limited-graphics environments before first paint so the expensive
+// blur/backdrop-filter effects are never rendered. Covers the common cases:
+// no WebGL at all, a software rasterizer (SwiftShader/llvmpipe/Basic Render),
+// very few CPU cores, little device memory, or prefers-reduced-transparency.
+(function () {
+  var root = document.documentElement;
+  var low = false;
+  try {
+    if (new URLSearchParams(window.location.search).get('lowgfx') === '1') low = true;
+  } catch (e) { /* very old browsers */ }
+  try {
+    var canvas = document.createElement('canvas');
+    var gl = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (!gl) {
+      low = true;
+    } else {
+      var info = gl.getExtension('WEBGL_debug_renderer_info');
+      var renderer = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL) || '') : '';
+      if (/swiftshader|llvmpipe|softpipe|software|basic render driver|mesa offscreen/i.test(renderer)) low = true;
+      var lose = gl.getExtension('WEBGL_lose_context');
+      if (lose) lose.loseContext();
+    }
+  } catch (e) {
+    low = true;
+  }
+  if (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2) low = true;
+  if (navigator.deviceMemory && navigator.deviceMemory <= 2) low = true;
+  if (window.matchMedia && (window.matchMedia('(prefers-reduced-transparency: reduce)').matches ||
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches)) low = true;
+  if (low) root.classList.add('low-graphics');
+})();
+</script>
 </head>
 <body{{if ne .View "login"}} class="app-body"{{end}}>
 <script src="/static/anime.min.js"></script>
 <script>
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const lowGraphics = document.documentElement.classList.contains('low-graphics');
 
 function animateRows(bodyId) {
   if (!window.anime || reduceMotion) return;
@@ -715,15 +765,15 @@ function animateView(view) {
       <table>
         <thead><tr><th>Endpoint</th><th>Auth</th><th>Purpose</th><th>Stored name</th></tr></thead>
         <tbody>
-          <tr><td><code>{{.BaseURL}}/upload</code></td><td>Bearer token</td><td>Arbitrary file upload (script/curl/agents)</td><td>Original name + random suffix (no collisions)</td></tr>
-          <tr><td><code>{{.BaseURL}}/dashboard/upload</code></td><td>Signed-in user</td><td>Browser upload from the Files view</td><td>Original name, kept as-is (refuses duplicates)</td></tr>
-          <tr><td><code>{{.BaseURL}}/</code> (any path)</td><td>Bearer token</td><td>Accept-and-log sink for any request</td><td>—</td></tr>
+          <tr><td><code><span class="js-baseurl">{{.BaseURL}}</span>/upload</code></td><td>Bearer token</td><td>Arbitrary file upload (script/curl/agents)</td><td>Original name + random suffix (no collisions)</td></tr>
+          <tr><td><code><span class="js-baseurl">{{.BaseURL}}</span>/dashboard/upload</code></td><td>Signed-in user</td><td>Browser upload from the Files view</td><td>Original name, kept as-is (refuses duplicates)</td></tr>
+          <tr><td><code><span class="js-baseurl">{{.BaseURL}}</span>/</code> (any path)</td><td>Bearer token</td><td>Accept-and-log sink for any request</td><td>—</td></tr>
         </tbody>
       </table>
       <h3>Arbitrary upload (token)</h3>
-      <pre><code>curl -H "Authorization: Bearer $TOKEN" -F "file=@myfile.txt" {{.BaseURL}}/upload</code></pre>
-      <pre><code>curl -H "Authorization: Bearer $TOKEN" -T myfile.txt {{.BaseURL}}/upload</code></pre>
-      <pre><code>curl -H "Authorization: Bearer $TOKEN" --data-binary @myfile.txt "{{.BaseURL}}/upload?name=myfile.txt"</code></pre>
+      <pre><code>curl -H "Authorization: Bearer $TOKEN" -F "file=@myfile.txt" <span class="js-baseurl">{{.BaseURL}}</span>/upload</code></pre>
+      <pre><code>curl -H "Authorization: Bearer $TOKEN" -T myfile.txt <span class="js-baseurl">{{.BaseURL}}</span>/upload</code></pre>
+      <pre><code>curl -H "Authorization: Bearer $TOKEN" --data-binary @myfile.txt "<span class="js-baseurl">{{.BaseURL}}</span>/upload?name=myfile.txt"</code></pre>
       <p>A non-empty <code>?name=</code> query stores exactly that sanitized name (an existing file returns <code>409</code> and is never overwritten). Without it, the multipart part filename or a <code>Content-Disposition</code> header is used; API uploads then get a random suffix, and the final fallback is <code>upload-&lt;unix-timestamp&gt;</code>. The query therefore works for raw bodies, <code>curl -F</code>, and dashboard uploads alike.</p>
 
       <h3>Response</h3>
@@ -751,11 +801,11 @@ function animateView(view) {
       <p>ingestor can sit behind any reverse proxy that forwards the original client IP — nginx, Cloudflare, or a <a href="https://github.com/MrTurvey/flareprox" target="_blank" rel="noopener noreferrer">FlareProx</a> Cloudflare Worker pass-through. When it does, set <code>trust_proxy_headers=true</code> in <code>.env</code> (and <code>cookie_secure=true</code> if the proxy terminates TLS) so the audit log records the real client IP and generated links use the external scheme/host. The real client IP is resolved in priority order: <code>X-Morph-Real-Ip</code>, then <code>CF-Connecting-IP</code> (Cloudflare), then <code>X-Forwarded-For</code>. Keep the setting off when clients can reach the listener directly, otherwise a client can spoof its logged IP with a forged proxy header.</p>
 
       <h2 id="docs-health">Health</h2>
-      <pre><code>curl {{.BaseURL}}/healthz</code></pre>
+      <pre><code>curl <span class="js-baseurl">{{.BaseURL}}</span>/healthz</code></pre>
 
       <h2 id="docs-sharing">Public Sharing</h2>
       <p>Mark any non-quarantined file as <strong>public</strong> from the Files view (share button) to make it readable or downloadable without authentication:</p>
-      <pre><code>{{.BaseURL}}/pub?name={filename}</code></pre>
+      <pre><code><span class="js-baseurl">{{.BaseURL}}</span>/pub?name={filename}</code></pre>
       <p>Text files are served inline as <code>text/plain</code>; everything else downloads as an attachment. Marking a file <strong>private</strong> (or quarantining/deleting it) revokes the link immediately. Private or quarantined files return <code>404</code> from <code>/pub</code>. Every <code>/pub</code> request — successful or denied — is recorded in the audit log with the client IP and User-Agent.</p>
 
       <h2 id="docs-security">Security</h2>
@@ -990,7 +1040,22 @@ function animateView(view) {
 {{if ne .View "login"}}
 <script>
 const csrf = {{.CSRF}};
-const baseURL = "{{.BaseURL}}";
+
+// Base URL exactly as the browser reached this page, so examples and share
+// links stay correct behind a reverse proxy that rewrites Host to an internal
+// address (e.g. 127.0.0.1) or mounts the app under a path prefix. The
+// dashboard is served at <prefix>/dashboard/, so the public base is whatever
+// precedes that suffix.
+function viewedBaseURL() {
+  const prefix = window.location.pathname.replace(/\/dashboard\/?$/, '');
+  return window.location.origin + (prefix === '/' ? '' : prefix);
+}
+const baseURL = viewedBaseURL();
+
+// Replace the server-rendered fallback in the docs with the URL the browser
+// actually used (the server value remains as a no-JavaScript fallback).
+document.querySelectorAll('.js-baseurl').forEach(el => { el.textContent = baseURL; });
+
 const role = "{{.Role}}";
 const username = "{{.Username}}";
 const userID = {{.UserID}};
@@ -2425,7 +2490,9 @@ function toggleTheme() {
 applyTheme(localStorage.getItem('theme') === 'dark');
 
 (function animateLogin() {
-  if (!window.anime || reduceMotion || !document.querySelector('.login-card')) return;
+  // The entrance animation is decorative; skip it entirely when graphics
+  // resources are limited so the form is interactive immediately.
+  if (!window.anime || reduceMotion || lowGraphics || !document.querySelector('.login-card')) return;
   anime({targets: '.login-card', translateY: [14, 0], scale: [.985, 1], duration: 480, easing: 'easeOutCubic'});
   anime({targets: '.login-brand-mark .brand-icon', scale: [.5, 1], duration: 420, easing: 'easeOutBack', delay: 80});
   anime({targets: '.login-card .field, .login-card .btn', translateY: [8, 0], duration: 320, easing: 'easeOutCubic', delay: anime.stagger(60, {start: 140})});
