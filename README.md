@@ -1,45 +1,37 @@
-# ingestor
+<p align="center">
+  <img src=".github/assets/banner.svg" alt="ingestor — secure file ingestion for airgapped environments" width="100%">
+</p>
 
-Secure file upload server for airgapped environments and offensive engagements. It is a single Go binary with an embedded web dashboard, a bearer-token upload API, quarantine rules, public share links, an audit log, and optional multi-user accounts. Data lives in SQLite plus the upload directory, and no C compiler is required.
+<p align="center">
+  <a href="https://github.com/its0din-ai/ingestor/releases/latest"><img src="https://img.shields.io/github/v/release/its0din-ai/ingestor?style=flat-square&amp;color=22d3ee" alt="Latest release"></a>
+  <a href="https://github.com/its0din-ai/ingestor/blob/main/go.mod"><img src="https://img.shields.io/github/go-mod/go-version/its0din-ai/ingestor?style=flat-square&amp;logo=go&amp;logoColor=white" alt="Go version"></a>
+  <a href="https://github.com/its0din-ai/ingestor/pkgs/container/ingestor"><img src="https://img.shields.io/badge/GHCR-ingestor-2496ED?style=flat-square&amp;logo=github" alt="GHCR image"></a>
+  <img src="https://img.shields.io/badge/platform-linux%2Famd64%20%7C%20linux%2Farm64-0f172a?style=flat-square" alt="Platforms">
+</p>
+
+**ingestor** is a self-hosted file ingestion server for airgapped environments and offensive engagements. It ships as a single Go binary with an embedded dashboard, a bearer-token upload API, quarantine rules, public share links, audit logging, and optional multi-user accounts. State lives in SQLite and a local upload directory—no external services and no CGO.
 
 ## Features
 
+- Single static binary with an embedded web dashboard
 - Bearer-token upload API for `curl` and other HTTP clients
-- Multipart and raw body uploads
-- Random-suffix storage for API uploads, original-name storage for browser uploads
-- Extension based quarantine with a `.quarantined` suffix
-- Web dashboard with file browser, search, text preview, rename, download, delete, quarantine and release
-- Public share links that do not require authentication
-- Audit log for logins, uploads, reads, downloads, settings changes, shares, and file actions
-- Disk usage monitor
-- Hot-reloadable runtime settings stored in SQLite
-- Multi-user mode with a superadmin, per-user accounts, per-user storage, quotas, and per-user API tokens
-- Single-user mode to run the current release with pre-multi-user behavior
-- Compatibility with old `.env` files
-- Trusted reverse proxy header support for real client IP and external base URL
-
-## Requirements
-
-- Go 1.26.6 or newer
-- Linux or macOS for the provided `deploy.sh` workflow
-- `bash`, `rsync`, and `ssh` for remote deployment
-
-SQLite is provided by `modernc.org/sqlite`, which is pure Go. CGO is not needed.
+- Multipart and raw-body uploads with collision-safe storage
+- Extension-based quarantine with release support
+- File browser with search, text preview, in-place editing, rename, download, and delete
+- Public share links that require no authentication
+- Audit log for logins, uploads, reads, downloads, settings, shares, and file actions
+- Multi-user accounts with isolated storage, quotas, and per-user API tokens
+- Hot-reloadable runtime settings and legacy `.env` compatibility
+- Disk usage monitoring and reverse-proxy header support
 
 ## Quick start
 
+Requirements: Go 1.26.6 or newer. CGO is not required.
+
 ```sh
 cp .env.example .env
-```
-
-Edit `.env` and set at least:
-
-- `admin_password` - the first superadmin password
-- `jwt_secret` - at least 64 bytes; generate one with `openssl rand -hex 64`
-
-Then build and run:
-
-```sh
+# set admin_password and a jwt_secret of at least 64 bytes:
+# openssl rand -hex 64
 go build -o ingestor .
 ./ingestor
 ```
@@ -52,142 +44,62 @@ To build, deploy, and supervise the process in the background:
 ./deploy.sh
 ```
 
-`deploy.sh` also generates `jwt_secret` when it is missing or too short.
+## Docker
 
-## Docker / GHCR
-
-Prebuilt multi-arch images are published to the GitHub Container Registry:
+Prebuilt multi-arch images are published to GHCR:
 
 ```text
 ghcr.io/its0din-ai/ingestor:latest
-ghcr.io/its0din-ai/ingestor:3.12.0
-ghcr.io/its0din-ai/ingestor:3.12
+ghcr.io/its0din-ai/ingestor:3.13.0
+ghcr.io/its0din-ai/ingestor:3.13
 ```
 
-Create `.env` first; the container reads every setting from it (compose
-overrides `host`, `port`, `db_path`, and `upload_dir`):
+Create `.env` first, then start the stack:
 
 ```sh
 cp .env.example .env
-# set admin_password and jwt_secret (openssl rand -hex 64)
-```
-
-### Option 1: Docker-managed volumes (default)
-
-```sh
 docker compose up -d
 ```
 
-Data lives in the `ingestor-data` (SQLite at `/data/ingestor.db`) and
-`ingestor-uploads` (`/app/uploads`) volumes. They survive `docker compose down`
-and are removed only by `docker compose down -v`.
-
-Pin a release or change the published port:
+Data is stored in the `ingestor-data` and `ingestor-uploads` volumes and survives `docker compose down`. To pin a release or change the port:
 
 ```sh
-INGESTOR_IMAGE=ghcr.io/its0din-ai/ingestor:3.12.0 \
+INGESTOR_IMAGE=ghcr.io/its0din-ai/ingestor:3.13.0 \
 INGESTOR_PORT=8080 docker compose up -d
 ```
 
-### Option 2: Host bind mounts
-
-Point the volume variables at host paths instead:
+To use host bind mounts instead:
 
 ```sh
 mkdir -p ./data ./uploads
-INGESTOR_DATA_DIR=./data \
-INGESTOR_UPLOADS_DIR=./uploads \
-docker compose up -d
+INGESTOR_DATA_DIR=./data INGESTOR_UPLOADS_DIR=./uploads docker compose up -d
 ```
 
-The SQLite database is then `./data/ingestor.db` and uploads are in
-`./uploads`. Use absolute paths if you run compose from another directory.
-
-On Linux the image runs as UID/GID `10001`, so make the host directories
-writable by that user:
-
-```sh
-sudo chown -R 10001:10001 ./data ./uploads
-```
-
-On Docker Desktop (macOS/Windows) the file-sharing layer normally handles
-ownership; if the app reports a permission error, chown/chmod the directories
-the same way.
-
-Both options use the same image. Switching layouts requires recreating the
-container (`docker compose down`, then up with the other variables); copy the
-contents between the named volume and the host directory to migrate data.
-
-Compose overrides `host`, `port`, `db_path`, and `upload_dir` for the
-container; everything else (admin credentials, tokens, quotas, proxy settings)
-comes from `.env`. The GHCR package is public; if a pull asks for credentials,
-run `docker login ghcr.io` or set the package visibility to public under
-GitHub → Packages.
+On Linux, the container runs as UID/GID `10001`; make host directories writable by that user with `sudo chown -R 10001:10001 ./data ./uploads`.
 
 ## Configuration
 
-All keys live in `.env`. The values are read at startup. Runtime settings such as `upload_dir`, `max_upload_mb`, and `quarantine_extensions` are seeded into SQLite on first boot and can be changed later from the dashboard.
+All settings are read from `.env` (or the process environment, which takes precedence). Runtime settings such as `upload_dir`, `max_upload_mb`, and `quarantine_extensions` are seeded into SQLite on first boot and can be changed from the dashboard.
 
 | Key | Default | Description |
 | --- | --- | --- |
 | `host` | `127.0.0.1` | Listen address |
 | `port` | `8080` | Listen port |
 | `db_path` | `data/ingestor.db` | SQLite database path |
-| `admin_username` | `admin` | Superadmin username. Optional for old `.env` files |
-| `admin_password` | none | Password used to seed the superadmin on first boot |
-| `SINGLE_USER` | `false` | Disable the multi-user feature set. `single_user` is accepted as an alias |
-| `jwt_secret` | none | HS512 session signing key, at least 64 bytes. Required |
-| `session_ttl` | `24h` | Dashboard session lifetime as a Go duration |
-| `cookie_secure` | `false` | Mark the session cookie Secure. Use with HTTPS |
+| `admin_username` | `admin` | Superadmin username |
+| `admin_password` | none | Seeds the superadmin on first boot |
+| `jwt_secret` | none | HS512 session signing key, at least 64 bytes |
+| `session_ttl` | `24h` | Dashboard session lifetime |
+| `cookie_secure` | `false` | Mark the session cookie Secure (HTTPS) |
 | `trust_proxy_headers` | `false` | Trust client IP and base URL headers from a reverse proxy |
-| `upload_dir` | `uploads` | Upload root. New values must stay inside `uploads/` |
-| `max_upload_mb` | `2048` | Maximum size of one upload in MB |
-| `write_timeout` | `2h` | HTTP write and body read deadline. `0` disables the deadline |
-| `audit_retention` | `30d` | Audit log retention as a Go duration. `0` keeps all rows |
-| `bearer_tokens` | empty | Comma-separated upload tokens as `[label=]token[|RFC3339]` |
-| `bearer_token` | empty | Legacy single-token key, used when `bearer_tokens` is empty |
+| `upload_dir` | `uploads` | Upload root; new values must stay inside `uploads/` |
+| `max_upload_mb` | `2048` | Maximum size of one upload |
+| `write_timeout` | `2h` | HTTP write and body read deadline; `0` disables it |
+| `audit_retention` | `30d` | Audit log retention; `0` keeps all rows |
+| `bearer_tokens` | empty | Comma-separated `[label=]token[|RFC3339]` upload tokens |
+| `SINGLE_USER` | `false` | Disable multi-user accounts for legacy deployments |
 
-Example token list:
-
-```env
-bearer_tokens=alice=TOKEN_ONE|2027-06-01T00:00:00Z, bob=TOKEN_TWO
-```
-
-The process environment takes precedence over `.env`, so values can also be supplied by systemd or a container runtime.
-
-## Single-user mode
-
-Set `SINGLE_USER=true` to run the latest build with the pre-multi-user behavior:
-
-```env
-SINGLE_USER=true
-```
-
-In this mode:
-
-- The Users navigation item and Users view are not rendered
-- User management endpoints return `404`
-- Per-user API token rotation returns `404`
-- Per-user API tokens are ignored by the upload auth middleware
-- Regular user accounts cannot log in and their existing sessions are rejected
-- Only the superadmin and legacy `.env` bearer tokens can authenticate
-- Uploads use the legacy root `upload_dir/` with no per-user directories or quotas
-- Password-only login is accepted, matching the old single-admin form
-
-Both `SINGLE_USER` and `single_user` are accepted. The flag takes effect after restart.
-
-## Legacy `.env` compatibility
-
-Old `.env` files do not need to be changed:
-
-- Missing `admin_username` defaults to `admin`
-- `bearer_token` is used when `bearer_tokens` is empty
-- The old password-only login request is accepted
-- Sessions created before the multi-user upgrade remain valid and map to the single superadmin
-- Existing `admin_password_hash` values are reused, so the old password keeps working
-- Existing uploads, audit rows, and public links in the old root continue to work
-
-Set `SINGLE_USER=true` when you also want to hide and disable the multi-user surface.
+See [`.env.example`](.env.example) for the full reference.
 
 ## Upload API
 
@@ -197,36 +109,21 @@ Uploads require a bearer token:
 Authorization: Bearer TOKEN
 ```
 
-Two endpoints accept uploads:
-
-- `POST /upload`
-- Any non-GET method on `/`, which is the catch-all sink
-
-Both accept multipart form data or a raw request body. One file is stored per request.
-
-Failed bearer authentication is rate limited to 20 attempts per 15 minutes per
-client IP; further failures return `429`. Successful requests are never
-throttled. This makes guessing a plain token one value at a time impractical.
-
-Multipart example:
+Send one file per request to `POST /upload`, or to any non-GET method on `/`.
 
 ```sh
+# multipart
 curl -H "Authorization: Bearer $TOKEN" \
   -F "file=@report.txt" \
   http://127.0.0.1:8080/upload
-```
 
-Raw body example:
-
-```sh
+# raw body
 curl -H "Authorization: Bearer $TOKEN" \
   --data-binary @report.txt \
   "http://127.0.0.1:8080/?name=report.txt"
 ```
 
-When a non-empty `name` query parameter is present it sets the **exact** stored filename for every upload method; an existing file returns `409` and is never overwritten. Without it, the multipart part filename or `Content-Disposition` header is used, and API uploads get a random suffix before the extension so concurrent unnamed uploads never collide.
-
-Successful response:
+A non-empty `name` query parameter sets the exact stored filename; an existing file returns `409` and is never overwritten. Otherwise the multipart filename or `Content-Disposition` header is used, and API uploads receive a random suffix so concurrent uploads cannot collide.
 
 ```json
 {
@@ -238,150 +135,48 @@ Successful response:
 }
 ```
 
-If a file matches a quarantine extension, the response reports `quarantined: true` and the stored name gains a `.quarantined` suffix.
+Files matching a quarantine extension are stored with a `.quarantined` suffix and report `"quarantined": true`. Failed bearer authentication is rate limited per client IP; successful requests are not throttled.
 
-### Plain (mnemonic) tokens
-
-Every account can create a **plain token** from the Tokens view. The server
-generates a five-word phrase from the EFF large Diceware wordlist, joined by
-hyphens (for example `amber-cobalt-lunar-otter-violet`). It is readable and
-typeable, but it is still a bearer credential. Five words give about 64.6 bits of entropy,
-far more than a hand-picked password.
-
-- Regular users' plain tokens replace their personal token. They are stored
-  hashed for lookup and encrypted at rest so the owner can view them again.
-- Superadmins add workspace tokens, which are stored in plaintext in `.env`.
-- A generated phrase that is already in use is silently redrawn, so token
-  creation cannot be used to test whether a value exists.
-- Treat the phrase like a password: anyone who learns it can upload as that
-  account. Failed bearer authentication is rate limited per client IP.
-
-The wordlist is the EFF large Diceware list (CC BY 3.0).
-
-Dashboard uploads use the session-authenticated endpoint `POST /dashboard/upload`. They keep the original filename and return `409` when a file with that name already exists.
+Dashboard uploads use `POST /dashboard/upload`, keep the original filename, and return `409` when the name already exists.
 
 ## Dashboard
 
-The dashboard is session authenticated and CSRF protected.
+- **Files** — browser uploads, search, text preview, edit, rename, download, delete, quarantine, release, and share
+- **Exfil** — the same actions for files received through the API
+- **Settings** — upload directory, upload size, quarantine extensions, and account password
+- **Tokens** — workspace tokens or a rotated personal token
+- **Users** — superadmin account management, quotas, and storage actions
+- **Audit** — paginated activity log with client IP and user agent
+- **Docs** — in-app usage reference
 
-- Files - browser uploads, search, text preview, rename, edit text files, download, delete, quarantine, release, and public sharing
-- Exfil - the same actions for files uploaded through the API
-- Settings - change the upload directory, max upload size, quarantine extensions, and the current account password
-- Tokens - manage the workspace token list (random or plain), or rotate a personal token in multi-user mode
-- Users - superadmin only in multi-user mode; create accounts, set quotas, disable, delete, inspect file metadata, and wipe per-user storage
-- Audit - paginated activity log with client IP and user agent
-- Docs - in-app usage reference
+Public shares are created from any non-quarantined file and served at `GET /pub?name=STORED_NAME` (add `&u=USER_ID` for a regular user's storage). Quarantined files cannot be shared.
 
-### Editing text files
+## Security
 
-Readable text files up to 1 MiB can be edited in place from the Files or Exfil
-view. The editor loads the file with a content-hash version; saving sends that
-version back and the server only writes when it still matches. If another tab
-or user saves first, the second save gets `409` and the editor asks you to
-reload instead of silently overwriting. Writes are atomic (temp file plus
-rename), so readers never observe a partial file.
+- Use a random `jwt_secret` of at least 64 bytes
+- Set `cookie_secure=true` when serving the dashboard over HTTPS
+- Enable `trust_proxy_headers` only when clients cannot reach the listener directly
+- Use `SINGLE_USER=true` when accounts are not needed to remove the account surface
+- Revoke public share links when they are no longer required
+- Treat quarantine as defense in depth, not a sandbox; run as an unprivileged user and never execute uploaded files
+- Protect `.env`, which holds workspace bearer tokens
 
-An open editor also holds a five-minute lease, renewed every minute while the
-tab is open. Delete, rename, quarantine, and release on that file are refused
-with `409` while another session holds the lease, so the file cannot disappear
-under the editor. Closing the editor or navigating away releases the lease
-immediately; if the tab dies or the network drops, the lease expires. Opening
-the same file again as the same account takes the lease over and invalidates
-the older tab.
+## Operations
 
-### Public shares
-
-Mark a non-quarantined file public to create an unauthenticated link:
-
-```text
-GET /pub?name=STORED_NAME
-GET /pub?u=USER_ID&name=STORED_NAME
-```
-
-`u` scopes the share to a regular user's storage. Without `u`, the legacy and superadmin root is used. The public file allowlist is stored in SQLite. Quarantined files cannot be made public.
-
-## Accounts and storage
-
-In multi-user mode, the superadmin is seeded from `admin_password`. Additional accounts are created from the Users view.
-
-- The superadmin manages global settings and the shared root `upload_dir/`
-- Regular users are isolated under `upload_dir/users/<id>/`
-- Quotas are set in MB. `0` means no quota
-- Regular users get one personal API token. Tokens are looked up by SHA-256 and stored encrypted at rest with AES-GCM
-- Passwords must be at least 12 characters
-- The superadmin cannot read regular user file content through the Users view; the view exposes metadata and destructive actions only
-
-## Public endpoints
-
-| Path | Purpose |
-| --- | --- |
-| `GET /healthz` | Health check with version |
-| `GET /pub` | Public share download |
-| `GET /static/` | Vendored fonts and animation assets |
-
-## Deployment
-
-`deploy.sh` supports these commands:
+`deploy.sh` builds and supervises the service:
 
 ```sh
-./deploy.sh          # build, deploy, and start in the background
-./deploy.sh build    # build into dist/
-./deploy.sh deploy   # build and copy to the deploy path
-./deploy.sh run      # build, deploy, and restart
-./deploy.sh stop     # stop the supervised process
-./deploy.sh restart  # restart without rebuilding
-./deploy.sh status   # show process status
+./deploy.sh          # build, deploy, and start
+./deploy.sh status   # process status
 ./deploy.sh logs     # tail the application log
+./deploy.sh restart  # restart without rebuilding
+./deploy.sh stop     # stop the supervised process
 ./deploy.sh systemd  # print a systemd unit
 ```
 
-Environment variables:
+Set `DEPLOY_PATH` for the deploy directory, `DEPLOY_HOST` for remote deployment over SSH, and `SERVICE_USER` for the generated systemd unit.
 
-- `DEPLOY_PATH` - deploy directory, defaults to the project root
-- `DEPLOY_HOST` - optional `user@host` for remote deployment over SSH
-- `SERVICE_USER` - user shown in the generated systemd unit
-
-The deploy step never deletes files at the destination, so the SQLite database and uploads are preserved.
-
-## Data and backup
-
-Back up both locations:
-
-- The SQLite database at `db_path`
-- The upload directory at `upload_dir`
-
-SQLite runs in WAL mode, so a consistent backup should include the `-wal` and `-shm` files or be taken with the service stopped.
-
-## Security notes
-
-- Use a random `jwt_secret` of at least 64 bytes
-- Set `cookie_secure=true` when the dashboard is served over HTTPS
-- Enable `trust_proxy_headers` only when clients cannot reach the listener directly; otherwise client IPs can be spoofed
-- Keep `SINGLE_USER=true` if you do not need accounts; it removes the account management surface entirely
-- Public share links are unauthenticated by design; revoke them when no longer needed
-- Quarantine is defense in depth, not a sandbox. Run the service as an unprivileged user and never serve the upload directory with a script-capable web server
-- Workspace bearer tokens live in `.env`; protect that file
-
-## Project layout
-
-```text
-main.go                 HTTP server and route wiring
-internal/admin          Dashboard handlers, file actions, users, tokens
-internal/audit          Audit log writer
-internal/auth           Sessions, CSRF, bearer middleware, roles
-internal/config         .env loading and runtime settings
-internal/db             SQLite schema, migrations, queries
-internal/identity       Authenticated user context
-internal/quarantine     Extension blacklist
-internal/upload         Upload sink and storage rules
-internal/users          Accounts, password hashing, API tokens, quotas
-internal/diskusage      Disk usage reporting
-internal/filetype       Text detection for previews
-internal/logging        Request logging and client IP resolution
-internal/ratelimit      Login rate limiting
-templates               Dashboard template and vendored static assets
-deploy.sh               Build, deploy, and service helper
-```
+Back up both the SQLite database (`db_path`) and the upload directory (`upload_dir`). SQLite runs in WAL mode, so include the `-wal` and `-shm` files or stop the service before taking a copy. `GET /healthz` returns the running version.
 
 ## Development
 
@@ -391,5 +186,4 @@ go vet ./...
 go test ./...
 ```
 
-The version is defined in `internal/version/version.go`.
-
+The version is defined in `internal/version/version.go` and overridden at link time from the nearest git tag.
