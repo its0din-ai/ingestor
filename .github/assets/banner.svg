@@ -2,20 +2,20 @@
   <title>ingestor — secure file ingestion for airgapped environments</title>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#070D18"/>
-      <stop offset="0.55" stop-color="#0B1526"/>
-      <stop offset="1" stop-color="#0A1A2A"/>
+      <stop offset="0" stop-color="#08050F"/>
+      <stop offset="0.55" stop-color="#120A22"/>
+      <stop offset="1" stop-color="#1A0F2E"/>
     </linearGradient>
     <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#38BDF8"/>
-      <stop offset="1" stop-color="#2DD4BF"/>
+      <stop offset="0" stop-color="#C084FC"/>
+      <stop offset="1" stop-color="#F0ABFC"/>
     </linearGradient>
     <radialGradient id="glow" cx="0.84" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#22D3EE" stop-opacity="0.16"/>
-      <stop offset="1" stop-color="#22D3EE" stop-opacity="0"/>
+      <stop offset="0" stop-color="#A855F7" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#A855F7" stop-opacity="0"/>
     </radialGradient>
     <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
-      <path d="M32 0H0V32" fill="none" stroke="#1E293B" stroke-width="0.6" opacity="0.45"/>
+      <path d="M32 0H0V32" fill="none" stroke="#2A1B45" stroke-width="0.6" opacity="0.5"/>
     </pattern>
     <filter id="blur" x="-50%" y="-50%" width="200%" height="200%">
       <feGaussianBlur stdDeviation="20"/>
@@ -27,33 +27,35 @@
   <rect width="1280" height="320" fill="url(#glow)"/>
 
   <!-- Product mark: application brand icon (templates/admin.html .brand-icon) -->
-  <rect x="72" y="112" width="96" height="96" rx="24" fill="#0B1D2E" stroke="url(#accent)" stroke-width="2"/>
+  <rect x="72" y="112" width="96" height="96" rx="24" fill="#150B26" stroke="url(#accent)" stroke-width="2"/>
   <g transform="translate(81 121) scale(3.25)" fill="none" stroke="url(#accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
     <path d="M12 3 4 6v6c0 5 3.6 8.2 8 9 4.4-.8 8-4 8-9V6l-8-3Z"/>
     <path d="M12 16V9M9 12l3-3 3 3"/>
   </g>
 
   <!-- Wordmark -->
-  <text x="200" y="180" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="62" font-weight="700" letter-spacing="-1.5" fill="#F8FAFC">ingestor</text>
-  <text x="201" y="218" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="22" fill="#94A3B8">Secure file ingestion for airgapped environments</text>
+  <g font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono', monospace">
+    <text x="200" y="180" font-size="58" font-weight="700" letter-spacing="1" fill="#F5F3FF">ingestor</text>
+    <text x="201" y="216" font-size="20" letter-spacing="0.2" fill="#B4A7CC">Secure file ingestion for airgapped environments</text>
 
-  <!-- Capability chips -->
-  <g font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="600" letter-spacing="1.4" fill="#7DD3FC">
-    <rect x="200" y="240" width="150" height="28" rx="14" fill="#0C1B2B" stroke="#1E3A5F"/>
-    <text x="216" y="259">SINGLE BINARY</text>
-    <rect x="362" y="240" width="164" height="28" rx="14" fill="#0C1B2B" stroke="#1E3A5F"/>
-    <text x="378" y="259">SQLITE STORAGE</text>
-    <rect x="538" y="240" width="180" height="28" rx="14" fill="#0C1B2B" stroke="#1E3A5F"/>
-    <text x="554" y="259">BEARER-TOKEN API</text>
+    <!-- Capability chips -->
+    <g font-size="11" font-weight="600" letter-spacing="1.2" fill="#D8B4FE" text-anchor="middle">
+      <rect x="200" y="240" width="150" height="28" rx="14" fill="#170D29" stroke="#3B2A5E"/>
+      <text x="275" y="258">SINGLE BINARY</text>
+      <rect x="362" y="240" width="164" height="28" rx="14" fill="#170D29" stroke="#3B2A5E"/>
+      <text x="444" y="258">SQLITE STORAGE</text>
+      <rect x="538" y="240" width="180" height="28" rx="14" fill="#170D29" stroke="#3B2A5E"/>
+      <text x="628" y="258">BEARER-TOKEN API</text>
+    </g>
   </g>
 
   <!-- Security motif -->
   <g fill="none">
-    <circle cx="1070" cy="160" r="100" stroke="#17233A" stroke-width="1.2"/>
-    <circle cx="1070" cy="160" r="135" stroke="#17233A" stroke-width="1.2" stroke-dasharray="3 8"/>
-    <circle cx="1070" cy="160" r="170" stroke="#17233A" stroke-width="1.2" stroke-dasharray="2 12"/>
-    <circle cx="1070" cy="160" r="110" fill="#22D3EE" opacity="0.08" filter="url(#blur)"/>
-    <path d="M1070 96L1122 117V166C1122 202 1097 224 1070 236C1043 224 1018 202 1018 166V117Z" fill="#0B2233" stroke="url(#accent)" stroke-width="2.5"/>
-    <path d="M1045 162l17 17 34-38" stroke="#5EEAD4" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="1070" cy="160" r="100" stroke="#2A1B45" stroke-width="1.2"/>
+    <circle cx="1070" cy="160" r="135" stroke="#2A1B45" stroke-width="1.2" stroke-dasharray="3 8"/>
+    <circle cx="1070" cy="160" r="170" stroke="#2A1B45" stroke-width="1.2" stroke-dasharray="2 12"/>
+    <circle cx="1070" cy="160" r="110" fill="#A855F7" opacity="0.1" filter="url(#blur)"/>
+    <path d="M1070 96L1122 117V166C1122 202 1097 224 1070 236C1043 224 1018 202 1018 166V117Z" fill="#170D2A" stroke="url(#accent)" stroke-width="2.5"/>
+    <path d="M1045 162l17 17 34-38" stroke="#E9D5FF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
 </svg>
