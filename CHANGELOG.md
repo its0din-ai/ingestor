@@ -8,6 +8,24 @@ Releases are annotated git tags named `vMAJOR.MINOR.PATCH`.
 
 ## [Unreleased]
 
+## [3.13.2] - 2026-11-07
+
+### Changed
+
+- Relicensed under the AI Native Application License (AINAL) v2.0 and added an
+  AI-generated notice to the README.
+
+### Fixed
+
+- The Docs view and public share links now use the URL the browser actually
+  visited instead of the server's listen address, so they stay correct behind
+  a reverse proxy or when the app is mounted under a path prefix.
+- The login page is responsive again on low-end devices, VMs, and systems
+  without GPU/WebGL acceleration. Limited-graphics environments are detected
+  before first paint and use a cheap gradient-orb fallback, skip
+  `backdrop-filter` blur, and skip the decorative entrance animation. Append
+  `?lowgfx=1` to force the fallback.
+
 ## [3.13.1] - 2026-11-07
 
 ### Changed

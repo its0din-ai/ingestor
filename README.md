@@ -58,7 +58,7 @@ Prebuilt multi-arch images are published to GHCR:
 
 ```text
 ghcr.io/its0din-ai/ingestor:latest
-ghcr.io/its0din-ai/ingestor:3.13.1
+ghcr.io/its0din-ai/ingestor:3.13.2
 ghcr.io/its0din-ai/ingestor:3.13
 ```
 
@@ -72,7 +72,7 @@ docker compose up -d
 Data is stored in the `ingestor-data` and `ingestor-uploads` volumes and survives `docker compose down`. To pin a release or change the port:
 
 ```sh
-INGESTOR_IMAGE=ghcr.io/its0din-ai/ingestor:3.13.1 \
+INGESTOR_IMAGE=ghcr.io/its0din-ai/ingestor:3.13.2 \
 INGESTOR_PORT=8080 docker compose up -d
 ```
 
