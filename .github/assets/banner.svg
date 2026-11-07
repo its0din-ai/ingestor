@@ -35,18 +35,17 @@
 
   <!-- Wordmark -->
   <g font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono', monospace">
-    <text x="200" y="178" font-size="58" font-weight="700" letter-spacing="1" fill="#F5F3FF">ingestor</text>
-    <text x="201" y="212" font-size="20" letter-spacing="0.2" fill="#B4A7CC">Secure file ingestion for airgapped environments</text>
-    <text x="201" y="242" font-size="15" font-style="italic" letter-spacing="0.2" fill="#C4B5FD">Ingestor. where open directories defeat your covert payload</text>
+    <text x="200" y="180" font-size="58" font-weight="700" letter-spacing="1" fill="#F5F3FF">ingestor</text>
+    <text x="201" y="216" font-size="19" font-style="italic" letter-spacing="0.2" fill="#C4B5FD">Where open directories defeat your covert payloads.</text>
 
     <!-- Capability chips -->
     <g font-size="11" font-weight="600" letter-spacing="1.2" fill="#D8B4FE" text-anchor="middle">
-      <rect x="200" y="258" width="150" height="28" rx="14" fill="#170D29" stroke="#3B2A5E"/>
-      <text x="275" y="276">SINGLE BINARY</text>
-      <rect x="362" y="258" width="164" height="28" rx="14" fill="#170D29" stroke="#3B2A5E"/>
-      <text x="444" y="276">SQLITE STORAGE</text>
-      <rect x="538" y="258" width="180" height="28" rx="14" fill="#170D29" stroke="#3B2A5E"/>
-      <text x="628" y="276">BEARER-TOKEN API</text>
+      <rect x="200" y="240" width="150" height="28" rx="14" fill="#170D29" stroke="#3B2A5E"/>
+      <text x="275" y="258">SINGLE BINARY</text>
+      <rect x="362" y="240" width="164" height="28" rx="14" fill="#170D29" stroke="#3B2A5E"/>
+      <text x="444" y="258">SQLITE STORAGE</text>
+      <rect x="538" y="240" width="180" height="28" rx="14" fill="#170D29" stroke="#3B2A5E"/>
+      <text x="628" y="258">BEARER-TOKEN API</text>
     </g>
   </g>
 
