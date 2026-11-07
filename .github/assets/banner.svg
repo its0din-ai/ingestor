@@ -48,7 +48,7 @@
     <circle cx="1070" cy="160" r="135" stroke="#2A1B45" stroke-width="1.2" stroke-dasharray="3 8"/>
     <circle cx="1070" cy="160" r="170" stroke="#2A1B45" stroke-width="1.2" stroke-dasharray="2 12"/>
     <circle cx="1070" cy="160" r="110" fill="#A855F7" opacity="0.1" filter="url(#blur)"/>
-    <g transform="translate(983.6 73.6) scale(7.2)" stroke="url(#accent)" stroke-width="0.35" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="translate(983.6 73.6) scale(7.2)" stroke="url(#accent)" stroke-width="0.55" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 3 4 6v6c0 5 3.6 8.2 8 9 4.4-.8 8-4 8-9V6l-8-3Z" fill="#170D2A"/>
       <path d="M12 16V9M9 12l3-3 3 3"/>
     </g>
