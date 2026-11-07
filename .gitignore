@@ -30,7 +30,9 @@ dist/
 .DS_Store
 Thumbs.db
 
+# Local reference material (not part of the repository)
 resources/
+resources/**
 .security-audit-skill/*
 .security-audit-run/*
 .claude/*
