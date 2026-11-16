@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"math"
@@ -154,16 +155,22 @@ func (h *Handler) DiskUsage(w http.ResponseWriter, r *http.Request) {
 			quotaMB = rec.QuotaMB
 		}
 	}
-	web.JSON(w, http.StatusOK, map[string]any{
-		"upload_dir_bytes": info.UploadDirBytes,
-		"used_bytes":       info.UsedBytes,
-		"total_bytes":      info.TotalBytes,
-		"free_bytes":       info.FreeBytes,
-		"free_percent":     math.Round(diskusage.FreePercent(info)*10) / 10,
+	// The dashboard shows host-wide filesystem telemetry only to superadmins.
+	// Enforce that split server-side: a regular user receives only their own
+	// storage counters, never the host's capacity and free space.
+	resp := map[string]any{
 		"storage_bytes":    ownBytes,
 		"storage_files":    ownFiles,
 		"quota_mb":         quotaMB,
-	})
+		"upload_dir_bytes": info.UploadDirBytes,
+	}
+	if u.IsSuperadmin() {
+		resp["used_bytes"] = info.UsedBytes
+		resp["total_bytes"] = info.TotalBytes
+		resp["free_bytes"] = info.FreeBytes
+		resp["free_percent"] = math.Round(diskusage.FreePercent(info)*10) / 10
+	}
+	web.JSON(w, http.StatusOK, resp)
 }
 
 // ListFiles returns the files currently stored in the upload directory.
@@ -564,7 +571,7 @@ func (h *Handler) CloseEdit(w http.ResponseWriter, r *http.Request) {
 // taken-over lease, or an externally changed file all fail with 409 instead of
 // clobbering newer content.
 func (h *Handler) SaveDocument(w http.ResponseWriter, r *http.Request) {
-	dir, userID, _, ok := h.scope(r)
+	dir, userID, u, ok := h.scope(r)
 	if !ok {
 		web.JSON(w, http.StatusForbidden, web.ErrorResponse{Status: "error", Message: "forbidden"})
 		return
@@ -657,7 +664,15 @@ func (h *Handler) SaveDocument(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if err := writeFileAtomic(path, content); err != nil {
+	if err := h.writeWithinQuota(dir, u, path, int64(len(old)), int64(len(content)), content); err != nil {
+		var quotaErr quotaExceededError
+		if errors.As(err, &quotaErr) {
+			web.JSON(w, http.StatusRequestEntityTooLarge, web.ErrorResponse{
+				Status:  "error",
+				Message: quotaErr.Error(),
+			})
+			return
+		}
 		slog.Warn("failed to save edited file", "name", req.Name, "err", err)
 		web.JSON(w, http.StatusInternalServerError, web.ErrorResponse{
 			Status:  "error",
@@ -707,6 +722,48 @@ func readEditable(path string) ([]byte, string, error) {
 func contentVersion(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// quotaExceededError reports that an edit would push the account past its
+// storage quota. It carries the measured usage so the response matches the
+// upload path's "storage quota exceeded: N of N MB used" message.
+type quotaExceededError struct {
+	used    int64
+	quotaMB int64
+}
+
+func (e quotaExceededError) Error() string {
+	return fmt.Sprintf("storage quota exceeded: %d of %d MB used", e.used/(1024*1024), e.quotaMB)
+}
+
+// writeWithinQuota writes content to path after verifying that a regular
+// user's storage quota can absorb the growth (newSize - oldSize). The check
+// and the write run under a per-account lock shared with the upload path, so
+// concurrent writes cannot both consume the same free space. Superadmins and
+// accounts with quota_mb=0 are not limited.
+func (h *Handler) writeWithinQuota(dir string, u identity.User, path string, oldSize, newSize int64, content []byte) error {
+	if !u.IsUser() {
+		return writeFileAtomic(path, content)
+	}
+	rec, err := users.Get(h.conn, u.ID)
+	if err != nil {
+		return err
+	}
+
+	unlock := users.LockQuota(u.ID)
+	defer unlock()
+
+	if rec.QuotaMB > 0 && newSize > oldSize {
+		used, _, err := users.Usage(dir)
+		if err != nil {
+			return err
+		}
+		quotaBytes := rec.QuotaMB * 1024 * 1024
+		if used+(newSize-oldSize) > quotaBytes {
+			return quotaExceededError{used: used, quotaMB: rec.QuotaMB}
+		}
+	}
+	return writeFileAtomic(path, content)
 }
 
 // writeFileAtomic replaces path with content via a temp file in the same

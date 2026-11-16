@@ -25,25 +25,33 @@ import (
 const (
 	loginLimit  = 15
 	loginWindow = 15 * time.Minute
+	// loginAccountLimit caps guesses against one account across all source
+	// addresses, so rotating real IPs (or many hosts) cannot turn the per-IP
+	// budget into an unlimited password-guessing campaign. It is deliberately
+	// higher than loginLimit so a single noisy client hits its own IP limit
+	// first.
+	loginAccountLimit = 60
 )
 
 type Handler struct {
-	cfg          *config.Config
-	conn         *sql.DB
-	tmpl         *template.Template
-	auditLog     *audit.Logger
-	sessions     *auth.Manager
-	loginLimiter *ratelimit.Limiter
+	cfg                 *config.Config
+	conn                *sql.DB
+	tmpl                *template.Template
+	auditLog            *audit.Logger
+	sessions            *auth.Manager
+	loginLimiter        *ratelimit.Limiter
+	loginAccountLimiter *ratelimit.Limiter
 }
 
 func New(cfg *config.Config, conn *sql.DB, sessions *auth.Manager, tmpl *template.Template, auditLog *audit.Logger) *Handler {
 	return &Handler{
-		cfg:          cfg,
-		conn:         conn,
-		tmpl:         tmpl,
-		auditLog:     auditLog,
-		sessions:     sessions,
-		loginLimiter: ratelimit.New(loginLimit, loginWindow),
+		cfg:                 cfg,
+		conn:                conn,
+		tmpl:                tmpl,
+		auditLog:            auditLog,
+		sessions:            sessions,
+		loginLimiter:        ratelimit.New(loginLimit, loginWindow),
+		loginAccountLimiter: ratelimit.New(loginAccountLimit, loginWindow),
 	}
 }
 
@@ -64,6 +72,17 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !h.loginLimiter.Allow(remote) {
+		h.auditLog.LoginFailed(r, username)
+		web.JSON(w, http.StatusTooManyRequests, web.ErrorResponse{
+			Status:  "error",
+			Message: "too many login attempts, try again later",
+		})
+		return
+	}
+	// A second, account-scoped budget stops distributed guessing from rotating
+	// source addresses to get a fresh per-IP allowance for every request.
+	if h.loginAccountLimiter != nil && username != "" &&
+		!h.loginAccountLimiter.Allow(strings.ToLower(username)) {
 		h.auditLog.LoginFailed(r, username)
 		web.JSON(w, http.StatusTooManyRequests, web.ErrorResponse{
 			Status:  "error",

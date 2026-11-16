@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"os"
 	pathpkg "path"
 	"path/filepath"
@@ -324,13 +325,58 @@ func (c *Config) CookieSecure() bool {
 }
 
 // TrustProxyHeaders indicates whether client-IP and public base-URL headers
-// from an upstream proxy (X-Morph-Real-Ip, CF-Connecting-IP,
-// X-Forwarded-For/Proto/Host) may be trusted. Enable when the app is only
-// reachable through a trusted reverse proxy such as Cloudflare or FlareProx;
-// keep it off when clients can connect directly, otherwise they could spoof
-// their IP in the audit log or bypass the per-IP login rate limiter.
+// from an upstream proxy (CF-Connecting-IP, X-Forwarded-For/Proto/Host) may
+// be trusted. Enable when the app is only reachable through a trusted reverse
+// proxy such as Cloudflare or nginx; keep it off when clients can connect
+// directly, otherwise they could spoof their IP in the audit log or bypass the
+// per-IP login rate limiter.
+//
+// Header trust is not enough on its own: X-Morph-Real-Ip is attacker-controlled
+// behind Cloudflare, so it is only honored when trust_morph_real_ip=true and
+// the immediate peer is a trusted proxy.
 func (c *Config) TrustProxyHeaders() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv("trust_proxy_headers")), "true")
+}
+
+// TrustMorphRealIP opts in to trusting the X-Morph-Real-Ip header for the
+// client IP. Only enable it when the listener is reachable exclusively through
+// a proxy that sets (and overwrites) that header, such as a FlareProx worker.
+// Cloudflare does not set this header: it passes a client-supplied value
+// through unchanged, so trusting it there lets any client forge its audit-log
+// address and rotate the login rate-limit key.
+func (c *Config) TrustMorphRealIP() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("trust_morph_real_ip")), "true")
+}
+
+// TrustedProxies returns the CIDR prefixes whose forwarded-IP headers may be
+// honored. When the list is empty, trust_proxy_headers=true trusts any peer
+// (compatible with deployments that restrict reachability at the network
+// layer). When it is non-empty, proxy headers are only honored for requests
+// whose socket peer matches one of the prefixes. Invalid entries are ignored
+// with a warning.
+func (c *Config) TrustedProxies() []netip.Prefix {
+	raw := strings.TrimSpace(os.Getenv("trusted_proxies"))
+	if raw == "" {
+		return nil
+	}
+	var prefixes []netip.Prefix
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if prefix, err := netip.ParsePrefix(entry); err == nil {
+			prefixes = append(prefixes, prefix)
+			continue
+		}
+		// Accept a bare address as a single-host prefix.
+		if addr, err := netip.ParseAddr(entry); err == nil {
+			prefixes = append(prefixes, netip.PrefixFrom(addr, addr.BitLen()))
+			continue
+		}
+		slog.Warn("ignoring invalid trusted_proxies entry", "entry", entry)
+	}
+	return prefixes
 }
 
 // UploadDir returns the resolved upload directory as an absolute path. It is

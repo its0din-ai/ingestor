@@ -521,7 +521,6 @@ function animateView(view) {
         <button type="submit" class="btn btn-primary btn-block">Sign in</button>
       </form>
       <div class="login-meta">
-        <span class="login-version">deployed {{.Version}}</span>
         <p class="login-hint">Authorized access only.</p>
       </div>
     </section>
@@ -798,7 +797,7 @@ function animateView(view) {
       </ul>
 
       <h2 id="docs-proxy">Reverse Proxy (nginx / Cloudflare / FlareProx)</h2>
-      <p>ingestor can sit behind any reverse proxy that forwards the original client IP — nginx, Cloudflare, or a <a href="https://github.com/MrTurvey/flareprox" target="_blank" rel="noopener noreferrer">FlareProx</a> Cloudflare Worker pass-through. When it does, set <code>trust_proxy_headers=true</code> in <code>.env</code> (and <code>cookie_secure=true</code> if the proxy terminates TLS) so the audit log records the real client IP and generated links use the external scheme/host. The real client IP is resolved in priority order: <code>X-Morph-Real-Ip</code>, then <code>CF-Connecting-IP</code> (Cloudflare), then <code>X-Forwarded-For</code>. Keep the setting off when clients can reach the listener directly, otherwise a client can spoof its logged IP with a forged proxy header.</p>
+      <p>ingestor can sit behind any reverse proxy that forwards the original client IP — nginx, Cloudflare, or a <a href="https://github.com/MrTurvey/flareprox" target="_blank" rel="noopener noreferrer">FlareProx</a> Cloudflare Worker pass-through. When it does, set <code>trust_proxy_headers=true</code> in <code>.env</code> (and <code>cookie_secure=true</code> if the proxy terminates TLS) so the audit log records the real client IP and generated links use the external scheme/host. Optionally set <code>trusted_proxies</code> to the proxy CIDRs so forwarded headers are only honored from those peers. The real client IP is resolved from <code>CF-Connecting-IP</code> (Cloudflare), then <code>X-Forwarded-For</code>; <code>X-Morph-Real-Ip</code> is only honored when <code>trust_morph_real_ip=true</code>, and must stay off behind Cloudflare because it passes a client-supplied value through unchanged. Keep <code>trust_proxy_headers</code> off when clients can reach the listener directly, otherwise a client can spoof its logged IP with a forged proxy header.</p>
 
       <h2 id="docs-health">Health</h2>
       <pre><code>curl <span class="js-baseurl">{{.BaseURL}}</span>/healthz</code></pre>

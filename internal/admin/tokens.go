@@ -37,11 +37,15 @@ func (h *Handler) ListTokens(w http.ResponseWriter, r *http.Request) {
 			web.JSON(w, http.StatusOK, map[string]any{"tokens": []bearerTokenData{}, "user_token": true})
 			return
 		}
+		expires := ""
+		if !info.ExpiresAt.IsZero() {
+			expires = info.ExpiresAt.UTC().Format(time.RFC3339)
+		}
 		web.JSON(w, http.StatusOK, map[string]any{
 			"tokens": []bearerTokenData{{
 				Label:     info.Label,
 				TokenID:   info.TokenID,
-				ExpiresAt: "",
+				ExpiresAt: expires,
 				Token:     info.Token,
 			}},
 			"user_token": true,
@@ -111,17 +115,12 @@ func (h *Handler) CreateToken(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if req.ExpiresAt != "" {
-		exp, err := time.Parse(time.RFC3339, req.ExpiresAt)
-		if err != nil {
-			web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
-				Status:  "error",
-				Message: "invalid expiry: " + req.ExpiresAt,
-			})
-			return
-		}
-		bt.ExpiresAt = exp
+	exp, expiryErr := tokenExpiry(req.ExpiresAt, time.Now())
+	if expiryErr != "" {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{Status: "error", Message: expiryErr})
+		return
 	}
+	bt.ExpiresAt = exp
 
 	tokens := h.cfg.BearerTokens()
 	tokens = append(tokens, bt)
@@ -176,17 +175,12 @@ func (h *Handler) CreatePlainToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bt := config.BearerToken{Token: token, Label: label}
-	if req.ExpiresAt != "" {
-		exp, err := time.Parse(time.RFC3339, req.ExpiresAt)
-		if err != nil {
-			web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
-				Status:  "error",
-				Message: "invalid expiry: " + req.ExpiresAt,
-			})
-			return
-		}
-		bt.ExpiresAt = exp
+	exp, expiryErr := tokenExpiry(req.ExpiresAt, time.Now())
+	if expiryErr != "" {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{Status: "error", Message: expiryErr})
+		return
 	}
+	bt.ExpiresAt = exp
 
 	tokens := h.cfg.BearerTokens()
 	tokens = append(tokens, bt)
@@ -213,7 +207,8 @@ func (h *Handler) CreatePlainUserToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Label string `json:"label"`
+		Label     string `json:"label"`
+		ExpiresAt string `json:"expires_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{
@@ -230,30 +225,36 @@ func (h *Handler) CreatePlainUserToken(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	exp, expiryErr := tokenExpiry(req.ExpiresAt, time.Now())
+	if expiryErr != "" {
+		web.JSON(w, http.StatusBadRequest, web.ErrorResponse{Status: "error", Message: expiryErr})
+		return
+	}
 
-	info, err := h.replaceUserPlainToken(u.ID, label)
+	info, err := h.replaceUserPlainToken(u.ID, label, exp)
 	if err != nil {
 		h.settingsErr(w, err)
 		return
 	}
 	h.auditLog.UserTokenPlain(r, u.Username)
 	web.JSON(w, http.StatusOK, map[string]any{
-		"token":    info.Token,
-		"token_id": info.TokenID,
-		"label":    info.Label,
+		"token":      info.Token,
+		"token_id":   info.TokenID,
+		"label":      info.Label,
+		"expires_at": formatExpiry(info.ExpiresAt),
 	})
 }
 
 // replaceUserPlainToken allocates an unused mnemonic and stores it for userID.
 // It retries if a concurrent insert claims the same value; the failed insert
 // transaction rolls back, so the user's previous token remains intact.
-func (h *Handler) replaceUserPlainToken(userID int64, label string) (users.TokenInfo, error) {
+func (h *Handler) replaceUserPlainToken(userID int64, label string, expiresAt time.Time) (users.TokenInfo, error) {
 	for i := 0; i < maxTokenAllocAttempts; i++ {
 		value, err := h.allocatePlainToken()
 		if err != nil {
 			return users.TokenInfo{}, err
 		}
-		info, err := users.CreateTokenValue(h.conn, userID, label, value, h.tokenSecret())
+		info, err := users.CreateTokenValueExpiring(h.conn, userID, label, value, expiresAt, h.tokenSecret())
 		if err == nil {
 			return info, nil
 		}
@@ -350,10 +351,35 @@ func tokenToData(t config.BearerToken) bearerTokenData {
 		Token:   t.Token,
 		TokenID: auth.TokenID(t.Token),
 	}
-	if !t.ExpiresAt.IsZero() {
-		d.ExpiresAt = t.ExpiresAt.UTC().Format(time.RFC3339)
-	}
+	d.ExpiresAt = formatExpiry(t.ExpiresAt)
 	return d
+}
+
+// tokenExpiry validates a caller-supplied expiry. An empty value means the
+// token does not expire. Malformed and already-past values are rejected rather
+// than silently discarded, so the client's requested lifetime is either
+// honored or the request fails.
+func tokenExpiry(raw string, now time.Time) (time.Time, string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, ""
+	}
+	exp, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, "invalid expiry: " + raw
+	}
+	if !exp.After(now) {
+		return time.Time{}, "expiry must be in the future"
+	}
+	return exp, ""
+}
+
+// formatExpiry renders a token expiry for JSON, or "" for a non-expiring token.
+func formatExpiry(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 // randomToken returns a 64-character hex token (32 random bytes).

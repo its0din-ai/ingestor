@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/base64"
 	"errors"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -373,6 +374,40 @@ func TestTrustProxyHeaders(t *testing.T) {
 	t.Setenv("trust_proxy_headers", "false")
 	if (&Config{}).TrustProxyHeaders() {
 		t.Fatal("expected trust_proxy_headers=false to be rejected")
+	}
+}
+
+func TestTrustMorphRealIP(t *testing.T) {
+	t.Setenv("trust_morph_real_ip", "")
+	if (&Config{}).TrustMorphRealIP() {
+		t.Fatal("X-Morph-Real-Ip must not be trusted by default")
+	}
+	t.Setenv("trust_morph_real_ip", "true")
+	if !(&Config{}).TrustMorphRealIP() {
+		t.Fatal("expected trust_morph_real_ip=true to opt in")
+	}
+}
+
+func TestTrustedProxies(t *testing.T) {
+	t.Setenv("trusted_proxies", "")
+	if got := (&Config{}).TrustedProxies(); got != nil {
+		t.Fatalf("empty trusted_proxies = %v, want nil", got)
+	}
+
+	t.Setenv("trusted_proxies", "10.0.0.0/8, 2001:db8::/32, 192.0.2.7, not-an-ip")
+	got := (&Config{}).TrustedProxies()
+	want := []netip.Prefix{
+		netip.MustParsePrefix("10.0.0.0/8"),
+		netip.MustParsePrefix("2001:db8::/32"),
+		netip.MustParsePrefix("192.0.2.7/32"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("TrustedProxies() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("TrustedProxies()[%d] = %v, want %v", i, got[i], want[i])
+		}
 	}
 }
 

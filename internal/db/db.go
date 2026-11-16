@@ -109,6 +109,10 @@ func migrate(conn *sql.DB) error {
 	if err := migrateColumn(conn, "user_tokens", "token_enc", `TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
+	// expires_at is nullable: NULL means the token never expires.
+	if err := migrateColumn(conn, "user_tokens", "expires_at", `DATETIME`); err != nil {
+		return err
+	}
 	if err := migratePublicFiles(conn); err != nil {
 		return err
 	}

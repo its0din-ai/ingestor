@@ -431,6 +431,86 @@ func TestEditRejectsMissingVersionAndBinaryContent(t *testing.T) {
 	}
 }
 
+// editUserWithQuota creates a regular user with a storage quota (in MB).
+func editUserWithQuota(t *testing.T, h *Handler, conn *sql.DB, name string, quotaMB int64) (identity.User, string) {
+	t.Helper()
+	u, err := users.Create(conn, name, "strong-password-123", quotaMB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return identity.User{ID: u.ID, Username: name, Role: identity.RoleUser}, users.UserDir(h.cfg.UploadDir(), u.ID)
+}
+
+// TestEditEnforcesStorageQuota covers the finding that an inline-edit save
+// could grow a file past the account's quota while uploads were refused.
+func TestEditEnforcesStorageQuota(t *testing.T) {
+	h, conn := testHandler(t)
+	u, dir := editUserWithQuota(t, h, conn, "alice", 1) // 1 MiB quota
+	writeUserFile(t, h, u.ID, "notes.txt", "hello")
+	// Leave only ~1 MiB minus 110 bytes free.
+	writeUserFile(t, h, u.ID, "filler.txt", strings.Repeat("x", 100))
+
+	_, doc, _ := editOpen(t, h, u, "notes.txt")
+	big := strings.Repeat("a", maxEditableBytes)
+
+	// Growing by 1 MiB does not fit in the remaining ~1 MiB.
+	code, body := editSave(t, h, u, "notes.txt", big, doc.Version, doc.Lock)
+	if code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("over-quota edit = %d, want 413; body = %s", code, body)
+	}
+	if !strings.Contains(body, "storage quota exceeded") {
+		t.Fatalf("over-quota edit body = %s, want quota message", body)
+	}
+	if got := readFile(t, filepath.Join(dir, "notes.txt")); got != "hello" {
+		t.Fatalf("over-quota edit wrote content: %q", got)
+	}
+}
+
+// TestEditQuotaShrinkThenGrow checks that shrinking frees space for a regrow
+// but that once the account is full again the same save is refused.
+func TestEditQuotaShrinkThenGrow(t *testing.T) {
+	h, conn := testHandler(t)
+	u, dir := editUserWithQuota(t, h, conn, "alice", 1) // 1 MiB quota
+	writeUserFile(t, h, u.ID, "notes.txt", "hello")
+
+	_, doc, _ := editOpen(t, h, u, "notes.txt")
+	if code, body := editSave(t, h, u, "notes.txt", "hi", doc.Version, doc.Lock); code != http.StatusOK {
+		t.Fatalf("shrink save = %d, want 200; body = %s", code, body)
+	}
+
+	big := strings.Repeat("a", maxEditableBytes)
+	_, doc, _ = editOpen(t, h, u, "notes.txt")
+	if code, body := editSave(t, h, u, "notes.txt", big, doc.Version, doc.Lock); code != http.StatusOK {
+		t.Fatalf("boundary save = %d, want 200; body = %s", code, body)
+	}
+	if got := readFile(t, filepath.Join(dir, "notes.txt")); got != big {
+		t.Fatalf("boundary save content length = %d, want %d", len(got), len(big))
+	}
+
+	// The quota is now exactly full; any further growth is refused.
+	writeUserFile(t, h, u.ID, "filler.txt", "x")
+	_, doc, _ = editOpen(t, h, u, "notes.txt")
+	code, body := editSave(t, h, u, "notes.txt", big+"x", doc.Version, doc.Lock)
+	if code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("full-quota grow = %d, want 413; body = %s", code, body)
+	}
+}
+
+func TestEditQuotaZeroIsUnlimited(t *testing.T) {
+	h, conn := testHandler(t)
+	u, dir := editUser(t, h, conn, "alice") // quota 0
+	writeUserFile(t, h, u.ID, "notes.txt", "hello")
+
+	_, doc, _ := editOpen(t, h, u, "notes.txt")
+	big := strings.Repeat("a", maxEditableBytes)
+	if code, body := editSave(t, h, u, "notes.txt", big, doc.Version, doc.Lock); code != http.StatusOK {
+		t.Fatalf("unlimited save = %d, want 200; body = %s", code, body)
+	}
+	if got := readFile(t, filepath.Join(dir, "notes.txt")); got != big {
+		t.Fatalf("unlimited save content length = %d, want %d", len(got), len(big))
+	}
+}
+
 func TestListFilesEditable(t *testing.T) {
 	h, conn := testHandler(t)
 	u, dir := editUser(t, h, conn, "alice")

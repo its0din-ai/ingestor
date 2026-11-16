@@ -1,12 +1,14 @@
 package admin
 
 import (
+	"fmt"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/encrypt0r/ingestor/internal/audit"
 	"github.com/encrypt0r/ingestor/internal/auth"
@@ -51,12 +53,13 @@ func loginHandler(t *testing.T) *Handler {
 		t.Fatal(err)
 	}
 	return &Handler{
-		cfg:          cfg,
-		conn:         conn,
-		tmpl:         tmpl,
-		sessions:     sessions,
-		auditLog:     audit.New(conn),
-		loginLimiter: ratelimit.New(loginLimit, loginWindow),
+		cfg:                 cfg,
+		conn:                conn,
+		tmpl:                tmpl,
+		sessions:            sessions,
+		auditLog:            audit.New(conn),
+		loginLimiter:        ratelimit.New(loginLimit, loginWindow),
+		loginAccountLimiter: ratelimit.New(loginAccountLimit, loginWindow),
 	}
 }
 
@@ -125,6 +128,28 @@ func TestSingleUserPasswordOnlyLogin(t *testing.T) {
 	}
 	if !hasSessionCookie(rec) {
 		t.Fatal("single-user password-only login must issue a session cookie")
+	}
+}
+
+// TestLoginAccountLimitStopsDistributedGuessing verifies that rotating source
+// addresses cannot mint a fresh per-IP allowance forever: the account itself is
+// also budgeted.
+func TestLoginAccountLimitStopsDistributedGuessing(t *testing.T) {
+	h := loginHandler(t)
+	h.loginAccountLimiter = ratelimit.New(2, time.Minute)
+
+	codes := make([]int, 3)
+	for i := range codes {
+		req := httptest.NewRequest(http.MethodPost, "/login",
+			strings.NewReader("username=alice&password=wrong-password"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.RemoteAddr = fmt.Sprintf("203.0.113.%d:5555", i+1)
+		rec := httptest.NewRecorder()
+		h.Login(rec, req)
+		codes[i] = rec.Code
+	}
+	if codes[0] != http.StatusOK || codes[1] != http.StatusOK || codes[2] != http.StatusTooManyRequests {
+		t.Fatalf("codes = %v, want [200 200 429]", codes)
 	}
 }
 

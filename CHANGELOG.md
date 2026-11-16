@@ -8,6 +8,30 @@ Releases are annotated git tags named `vMAJOR.MINOR.PATCH`.
 
 ## [Unreleased]
 
+### Fixed
+
+- Inline-edit saves (`POST /dashboard/api/edit`) now enforce the account storage
+  quota, including quarantined files and chunked request bodies. The quota check
+  and the write share a per-account lock with uploads, so concurrent writes can
+  no longer both consume the same free space.
+- Forwarded client-IP headers are only trusted when the socket peer is a trusted
+  proxy. `X-Morph-Real-Ip` is no longer honored by default (Cloudflare passes a
+  client-supplied value through unchanged), closing login/bearer rate-limit key
+  rotation and audit-log IP forgery. New `trusted_proxies` and
+  `trust_morph_real_ip` settings tune the trust policy.
+- The login endpoint also enforces a per-account attempt budget, so rotating
+  source addresses cannot turn the per-IP limit into unlimited guessing.
+- The public `/static/` mount refuses directory indexes and serves only
+  allow-listed asset extensions.
+- `/healthz` no longer discloses the exact build version, and the version was
+  removed from the unauthenticated login footer.
+- `/dashboard/api/disk` enforces the superadmin-only host telemetry split on the
+  server; regular users receive only their own storage counters.
+- Personal API tokens now honor `expires_at`: malformed or past values are
+  rejected, the expiry is stored and reported, and expired tokens are refused by
+  the bearer middleware. Changing a password revokes the account's personal API
+  tokens so leaked credentials stop working after a reset.
+
 ## [3.13.2] - 2026-11-07
 
 ### Changed

@@ -65,6 +65,47 @@ func withUser(r *http.Request, u identity.User) *http.Request {
 	return r.WithContext(identity.WithUser(r.Context(), u))
 }
 
+// TestDiskUsageHidesHostTelemetryFromRegularUsers enforces the field split the
+// dashboard UI applies: host capacity/usage are superadmin-only.
+func TestDiskUsageHidesHostTelemetryFromRegularUsers(t *testing.T) {
+	h, conn := testHandler(t)
+	u, err := users.Create(conn, "alice", "strong-password-123", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeUserFile(t, h, u.ID, "notes.txt", "hello")
+	regular := identity.User{ID: u.ID, Username: u.Username, Role: identity.RoleUser}
+
+	rec := httptest.NewRecorder()
+	h.DiskUsage(rec, withUser(httptest.NewRequest(http.MethodGet, "/dashboard/api/disk", nil), regular))
+	var userResp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &userResp); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"total_bytes", "used_bytes", "free_bytes", "free_percent"} {
+		if _, ok := userResp[key]; ok {
+			t.Errorf("regular user must not receive host-scoped field %q: %v", key, userResp)
+		}
+	}
+	for _, key := range []string{"storage_bytes", "storage_files", "quota_mb", "upload_dir_bytes"} {
+		if _, ok := userResp[key]; !ok {
+			t.Errorf("regular user missing own storage field %q: %v", key, userResp)
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	h.DiskUsage(rec, withUser(httptest.NewRequest(http.MethodGet, "/dashboard/api/disk", nil), superadmin(t, conn)))
+	var adminResp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &adminResp); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"total_bytes", "used_bytes", "free_bytes", "free_percent"} {
+		if _, ok := adminResp[key]; !ok {
+			t.Errorf("superadmin missing host field %q: %v", key, adminResp)
+		}
+	}
+}
+
 func TestCreateUserReturnsTokenOnce(t *testing.T) {
 	h, conn := testHandler(t)
 	su := superadmin(t, conn)

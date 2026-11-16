@@ -100,6 +100,8 @@ All settings are read from `.env` (or the process environment, which takes prece
 | `session_ttl` | `24h` | Dashboard session lifetime |
 | `cookie_secure` | `false` | Mark the session cookie Secure (HTTPS) |
 | `trust_proxy_headers` | `false` | Trust client IP and base URL headers from a reverse proxy |
+| `trusted_proxies` | empty | Comma-separated proxy peer IPs/CIDRs allowed to supply forwarded headers |
+| `trust_morph_real_ip` | `false` | Trust `X-Morph-Real-Ip` for the client IP (only for proxies that set it) |
 | `upload_dir` | `uploads` | Upload root; new values must stay inside `uploads/` |
 | `max_upload_mb` | `2048` | Maximum size of one upload |
 | `write_timeout` | `2h` | HTTP write and body read deadline; `0` disables it |
@@ -163,7 +165,8 @@ Public shares are created from any non-quarantined file and served at `GET /pub?
 
 - Use a random `jwt_secret` of at least 64 bytes
 - Set `cookie_secure=true` when serving the dashboard over HTTPS
-- Enable `trust_proxy_headers` only when clients cannot reach the listener directly
+- Enable `trust_proxy_headers` only when clients cannot reach the listener directly, and set `trusted_proxies` to your proxy CIDRs
+- Leave `trust_morph_real_ip` off behind Cloudflare: it forwards a client-supplied `X-Morph-Real-Ip` unchanged, so trusting it allows audit-IP forgery and login rate-limit bypass
 - Use `SINGLE_USER=true` when accounts are not needed to remove the account surface
 - Revoke public share links when they are no longer required
 - Treat quarantine as defense in depth, not a sandbox; run as an unprivileged user and never execute uploaded files

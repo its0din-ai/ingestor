@@ -165,6 +165,63 @@ func TestTokenLifecycle(t *testing.T) {
 	}
 }
 
+func TestTokenExpiryEnforced(t *testing.T) {
+	conn := openTestDB(t)
+	u, err := Create(conn, "alice", "strong-password-123", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	token, info, err := CreateTokenExpiring(conn, u.ID, "short", expires, testSecret())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ExpiresAt.Equal(expires) {
+		t.Fatalf("created ExpiresAt = %v, want %v", info.ExpiresAt, expires)
+	}
+	if _, ok := AuthenticateToken(conn, token); !ok {
+		t.Fatal("unexpired token must authenticate")
+	}
+	stored, err := Token(conn, u.ID, testSecret())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.ExpiresAt.Equal(expires) {
+		t.Fatalf("stored ExpiresAt = %v, want %v", stored.ExpiresAt, expires)
+	}
+
+	// Move the clock past the expiry by rewriting the stored timestamp.
+	if _, err := conn.Exec(`UPDATE user_tokens SET expires_at = ? WHERE user_id = ?`,
+		time.Now().Add(-time.Minute).UTC(), u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := AuthenticateToken(conn, token); ok {
+		t.Fatal("expired token must not authenticate")
+	}
+}
+
+func TestPasswordChangeRevokesTokens(t *testing.T) {
+	conn := openTestDB(t)
+	u, err := Create(conn, "alice", "strong-password-123", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := CreateToken(conn, u.ID, "api", testSecret())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := AuthenticateToken(conn, token); !ok {
+		t.Fatal("token must authenticate before the password change")
+	}
+	if err := SetPassword(conn, u.ID, "new-strong-password-456"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := AuthenticateToken(conn, token); ok {
+		t.Fatal("personal tokens must be revoked when the password changes")
+	}
+}
+
 func TestDisabledUserRejected(t *testing.T) {
 	conn := openTestDB(t)
 	u, err := Create(conn, "alice", "strong-password-123", 0)

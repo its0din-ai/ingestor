@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -75,17 +77,38 @@ func main() {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		// Liveness only: do not disclose the exact product build to
+		// unauthenticated callers.
 		web.JSON(w, http.StatusOK, map[string]string{
 			"status":  "ok",
 			"message": "healthy",
-			"version": version.Version,
 		})
 	})
 
 	// Public, read-only assets (vendored fonts and the animation library).
-	staticDir := http.FileServer(http.Dir("templates/static"))
+	// Directory indexes are refused: only allow-listed file extensions are
+	// served, and a request for a directory (or any other path) is a 404.
+	staticRoot := http.Dir("templates/static")
+	staticDir := http.FileServer(staticRoot)
+	allowedStaticExt := map[string]bool{
+		".woff2": true,
+		".js":    true,
+		".css":   true,
+		".txt":   true,
+	}
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch filepath.Ext(r.URL.Path) {
+		name := path.Clean("/" + strings.TrimPrefix(r.URL.Path, "/"))
+		info, err := os.Stat(filepath.Join("templates/static", strings.TrimPrefix(name, "/")))
+		if err != nil || info.IsDir() {
+			http.NotFound(w, r)
+			return
+		}
+		ext := strings.ToLower(path.Ext(name))
+		if !allowedStaticExt[ext] {
+			http.NotFound(w, r)
+			return
+		}
+		switch ext {
 		case ".woff2":
 			w.Header().Set("Content-Type", "font/woff2")
 		case ".js":
@@ -188,12 +211,16 @@ func main() {
 
 	addr := cfg.Addr()
 	writeTimeout := cfg.WriteTimeout()
-	// trust_proxy_headers gates whether proxy-supplied headers (X-Morph-Real-
-	// Ip, CF-Connecting-IP, X-Forwarded-For/Proto/Host) are honored for
-	// client-IP and base-URL derivation. Enable when ingestor is only reachable
-	// through a trusted reverse proxy such as nginx, Cloudflare, or a FlareProx
-	// worker.
-	handler := logging.ProxyHeaders(cfg.TrustProxyHeaders(), logging.Middleware(mux))
+	// trust_proxy_headers gates whether proxy-supplied headers (CF-Connecting-
+	// IP, X-Forwarded-For/Proto/Host) are honored for client-IP and base-URL
+	// derivation. trusted_proxies restricts that trust to known proxy peers,
+	// and trust_morph_real_ip opts in to X-Morph-Real-Ip (needed only for a
+	// proxy that sets it, such as a FlareProx worker).
+	handler := logging.ProxyHeaders(logging.ProxyPolicy{
+		Trust:            cfg.TrustProxyHeaders(),
+		TrustedProxies:   cfg.TrustedProxies(),
+		TrustMorphRealIP: cfg.TrustMorphRealIP(),
+	}, logging.Middleware(mux))
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           handler,

@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -64,6 +65,9 @@ type TokenInfo struct {
 	Label     string
 	CreatedAt time.Time
 	TokenID   string
+	// ExpiresAt is the token's instant of expiry; the zero value means the
+	// token never expires.
+	ExpiresAt time.Time
 	// Token is the plaintext value, populated only for the owning user's
 	// display request. It is never stored in plaintext.
 	Token string
@@ -289,6 +293,10 @@ func SetDisabled(conn *sql.DB, id int64, disabled bool) error {
 	return nil
 }
 
+// SetPassword changes a user's password and revokes every personal API token
+// for that account, so a token leaked before the reset stops working when the
+// owner rotates their credentials. Sessions are revoked by the caller (self
+// change) or by the admin flow.
 func SetPassword(conn *sql.DB, id int64, password string) error {
 	if err := validatePassword(password); err != nil {
 		return err
@@ -297,7 +305,27 @@ func SetPassword(conn *sql.DB, id int64, password string) error {
 	if err != nil {
 		return err
 	}
-	return execUserUpdate(conn, `UPDATE users SET password_hash = ? WHERE id = ?`, string(hash), id)
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.Exec(`UPDATE users SET password_hash = ? WHERE id = ?`, string(hash), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(`DELETE FROM user_tokens WHERE user_id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Delete removes an account, its tokens and sessions, and optionally its
@@ -371,6 +399,21 @@ func execUserUpdate(conn *sql.DB, query string, args ...any) error {
 	return nil
 }
 
+// quotaLocks holds one mutex per account so quota-checked writes can be
+// serialized without a global lock.
+var quotaLocks sync.Map // map[int64]*sync.Mutex
+
+// LockQuota serializes the quota check and the storage write for one account,
+// so two concurrent writers (upload and inline-edit save, or two uploads)
+// cannot both pass the same free-space check and then commit past the quota.
+// The returned function releases the lock and is safe to defer.
+func LockQuota(userID int64) func() {
+	v, _ := quotaLocks.LoadOrStore(userID, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
 // Usage returns the bytes and file count in dir, skipping in-flight temp files
 // and symbolic links.
 func Usage(dir string) (bytes int64, files int64, err error) {
@@ -415,6 +458,14 @@ func newToken() (string, error) {
 func hashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
+}
+
+// nullableTime stores a zero time as SQL NULL so "no expiry" is explicit.
+func nullableTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC()
 }
 
 // tokenCipher derives a 256-bit AES key from the application secret.
@@ -466,6 +517,12 @@ func decryptToken(secret []byte, encoded string) (string, error) {
 // authentication; the ciphertext (keyed from the app secret) lets the owner
 // view the token again later.
 func CreateToken(conn *sql.DB, userID int64, label string, secret []byte) (string, TokenInfo, error) {
+	return CreateTokenExpiring(conn, userID, label, time.Time{}, secret)
+}
+
+// CreateTokenExpiring is CreateToken with an explicit expiry. A zero expiresAt
+// creates a token that does not expire.
+func CreateTokenExpiring(conn *sql.DB, userID int64, label string, expiresAt time.Time, secret []byte) (string, TokenInfo, error) {
 	token, err := newToken()
 	if err != nil {
 		return "", TokenInfo{}, err
@@ -479,8 +536,8 @@ func CreateToken(conn *sql.DB, userID int64, label string, secret []byte) (strin
 		label = TokenLabel
 	}
 	res, err := conn.Exec(
-		`INSERT INTO user_tokens (user_id, token_hash, token_enc, label) VALUES (?, ?, ?, ?)`,
-		userID, hash, enc, label,
+		`INSERT INTO user_tokens (user_id, token_hash, token_enc, label, expires_at) VALUES (?, ?, ?, ?, ?)`,
+		userID, hash, enc, label, nullableTime(expiresAt),
 	)
 	if err != nil {
 		return "", TokenInfo{}, err
@@ -489,7 +546,10 @@ func CreateToken(conn *sql.DB, userID int64, label string, secret []byte) (strin
 	if err != nil {
 		return "", TokenInfo{}, err
 	}
-	return token, TokenInfo{ID: id, Label: label, TokenID: hash[:6], Token: token, CreatedAt: time.Now()}, nil
+	return token, TokenInfo{
+		ID: id, Label: label, TokenID: hash[:6], Token: token,
+		CreatedAt: time.Now(), ExpiresAt: expiresAt,
+	}, nil
 }
 
 // CreateTokenValue stores a caller-supplied token value for a user, replacing
@@ -497,6 +557,12 @@ func CreateToken(conn *sql.DB, userID int64, label string, secret []byte) (strin
 // is used for authentication; the ciphertext lets the owner view the value
 // again later.
 func CreateTokenValue(conn *sql.DB, userID int64, label, token string, secret []byte) (TokenInfo, error) {
+	return CreateTokenValueExpiring(conn, userID, label, token, time.Time{}, secret)
+}
+
+// CreateTokenValueExpiring is CreateTokenValue with an explicit expiry. A zero
+// expiresAt creates a token that does not expire.
+func CreateTokenValueExpiring(conn *sql.DB, userID int64, label, token string, expiresAt time.Time, secret []byte) (TokenInfo, error) {
 	if token == "" {
 		return TokenInfo{}, errors.New("empty token")
 	}
@@ -519,8 +585,8 @@ func CreateTokenValue(conn *sql.DB, userID int64, label, token string, secret []
 		return TokenInfo{}, err
 	}
 	res, err := tx.Exec(
-		`INSERT INTO user_tokens (user_id, token_hash, token_enc, label) VALUES (?, ?, ?, ?)`,
-		userID, hash, enc, label,
+		`INSERT INTO user_tokens (user_id, token_hash, token_enc, label, expires_at) VALUES (?, ?, ?, ?, ?)`,
+		userID, hash, enc, label, nullableTime(expiresAt),
 	)
 	if err != nil {
 		return TokenInfo{}, err
@@ -532,7 +598,10 @@ func CreateTokenValue(conn *sql.DB, userID int64, label, token string, secret []
 	if err := tx.Commit(); err != nil {
 		return TokenInfo{}, err
 	}
-	return TokenInfo{ID: id, Label: label, TokenID: hash[:6], Token: token, CreatedAt: time.Now()}, nil
+	return TokenInfo{
+		ID: id, Label: label, TokenID: hash[:6], Token: token,
+		CreatedAt: time.Now(), ExpiresAt: expiresAt,
+	}, nil
 }
 
 // RotateToken replaces every existing token for a user with a fresh one.
@@ -543,23 +612,28 @@ func RotateToken(conn *sql.DB, userID int64, label string, secret []byte) (strin
 	return CreateToken(conn, userID, label, secret)
 }
 
-// AuthenticateToken resolves a plaintext token to its active owner.
+// AuthenticateToken resolves a plaintext token to its active owner. Tokens past
+// their expiry, and tokens belonging to disabled accounts, are rejected.
 func AuthenticateToken(conn *sql.DB, token string) (identity.User, bool) {
 	if token == "" {
 		return identity.User{}, false
 	}
 	var (
-		id   int64
-		name string
-		role string
+		id        int64
+		name      string
+		role      string
+		expiresAt sql.NullTime
 	)
 	err := conn.QueryRow(
-		`SELECT u.id, u.username, u.role
+		`SELECT u.id, u.username, u.role, t.expires_at
 		   FROM user_tokens t JOIN users u ON u.id = t.user_id
 		  WHERE t.token_hash = ? AND u.disabled = 0`,
 		hashToken(token),
-	).Scan(&id, &name, &role)
+	).Scan(&id, &name, &role, &expiresAt)
 	if err != nil {
+		return identity.User{}, false
+	}
+	if expiresAt.Valid && !expiresAt.Time.IsZero() && !time.Now().Before(expiresAt.Time) {
 		return identity.User{}, false
 	}
 	return identity.User{ID: id, Username: name, Role: role}, true
@@ -581,19 +655,23 @@ func TokenOwner(conn *sql.DB, token string) (int64, bool) {
 // display to its owner.
 func Token(conn *sql.DB, userID int64, secret []byte) (TokenInfo, error) {
 	var (
-		t   TokenInfo
-		hs  string
-		enc string
+		t         TokenInfo
+		hs        string
+		enc       string
+		expiresAt sql.NullTime
 	)
 	err := conn.QueryRow(
-		`SELECT id, label, created_at, token_hash, token_enc FROM user_tokens WHERE user_id = ? ORDER BY id DESC LIMIT 1`,
+		`SELECT id, label, created_at, token_hash, token_enc, expires_at FROM user_tokens WHERE user_id = ? ORDER BY id DESC LIMIT 1`,
 		userID,
-	).Scan(&t.ID, &t.Label, &t.CreatedAt, &hs, &enc)
+	).Scan(&t.ID, &t.Label, &t.CreatedAt, &hs, &enc, &expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return TokenInfo{}, ErrNotFound
 	}
 	if err != nil {
 		return TokenInfo{}, err
+	}
+	if expiresAt.Valid {
+		t.ExpiresAt = expiresAt.Time
 	}
 	if len(hs) >= 6 {
 		t.TokenID = hs[:6]

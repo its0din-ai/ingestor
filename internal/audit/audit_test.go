@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/encrypt0r/ingestor/internal/db"
+	"github.com/encrypt0r/ingestor/internal/logging"
 )
 
 func TestUploadSummaryPrefersLabel(t *testing.T) {
@@ -50,7 +51,13 @@ func TestUploadSummaryViaCfProxy(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/upload", nil)
 	req.Header.Set("X-Morph-Real-Ip", "198.51.100.44")
-	l.Upload(req, "data.txt", "data_abc.txt", 10, false, "a3f9c2", "production")
+	// The header only counts when a trusted proxy sets it and the operator
+	// explicitly opts in to X-Morph-Real-Ip.
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		l.Upload(r, "data.txt", "data_abc.txt", 10, false, "a3f9c2", "production")
+	})
+	logging.ProxyHeaders(logging.ProxyPolicy{Trust: true, TrustMorphRealIP: true}, next).
+		ServeHTTP(httptest.NewRecorder(), req)
 
 	rows, err := db.ListAudit(conn, -1, 10, 0)
 	if err != nil {

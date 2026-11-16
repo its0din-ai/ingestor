@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/encrypt0r/ingestor/internal/config"
 	"github.com/encrypt0r/ingestor/internal/identity"
@@ -170,6 +171,46 @@ func TestCreatePlainUserToken(t *testing.T) {
 	}
 	if info.Token != resp.Token || info.Label != "laptop" {
 		t.Fatalf("stored token = %+v", info)
+	}
+}
+
+func TestCreatePlainUserTokenExpiry(t *testing.T) {
+	h, conn := testHandler(t)
+	alice, err := users.Create(conn, "alice", "strong-password-123", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := identity.User{ID: alice.ID, Username: "alice", Role: identity.RoleUser}
+
+	for _, exp := range []string{"2020-01-01T00:00:00Z", "not-a-date"} {
+		rec := postPlainUserToken(t, h, u, plainTokenReq{Label: "bad", ExpiresAt: exp})
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expiry %q status = %d, want 400; body = %s", exp, rec.Code, rec.Body.String())
+		}
+	}
+
+	future := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Second)
+	rec := postPlainUserToken(t, h, u, plainTokenReq{
+		Label: "laptop", ExpiresAt: future.Format(time.RFC3339),
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		ExpiresAt string `json:"expires_at"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.ExpiresAt != future.Format(time.RFC3339) {
+		t.Fatalf("expires_at = %q, want %q", resp.ExpiresAt, future.Format(time.RFC3339))
+	}
+
+	// The listing must report the stored expiry rather than an empty string.
+	listRec := httptest.NewRecorder()
+	h.ListTokens(listRec, withUser(httptest.NewRequest(http.MethodGet, "/dashboard/api/tokens", nil), u))
+	if !strings.Contains(listRec.Body.String(), future.Format(time.RFC3339)) {
+		t.Fatalf("token listing does not expose the expiry: %s", listRec.Body.String())
 	}
 }
 

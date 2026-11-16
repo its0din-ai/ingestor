@@ -272,6 +272,12 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request, src io.Reader, na
 		h.fail(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("file exceeds maximum upload size of %d MB", h.cfg.MaxUploadMB()))
 		return
 	}
+	// Serialize the quota check with the final rename so concurrent writes for
+	// the same account cannot both pass the free-space check. The lock is
+	// shared with the inline-edit save path.
+	unlock := users.LockQuota(o.userID)
+	defer unlock()
+
 	if o.quotaMB > 0 {
 		used, _, err := users.Usage(dir)
 		if err != nil {
