@@ -3,7 +3,8 @@ package version
 
 // Version is the application's semantic version (https://semver.org,
 // SemVer 2.0.0). It is the single source of truth for the running build and
-// is reported by /healthz and the startup log.
+// is reported in the startup log. It is deliberately kept out of
+// unauthenticated responses such as /healthz.
 //
 // Release builds override it at link time from the nearest git tag:
 //

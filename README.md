@@ -187,7 +187,7 @@ Public shares are created from any non-quarantined file and served at `GET /pub?
 
 Set `DEPLOY_PATH` for the deploy directory, `DEPLOY_HOST` for remote deployment over SSH, and `SERVICE_USER` for the generated systemd unit.
 
-Back up both the SQLite database (`db_path`) and the upload directory (`upload_dir`). SQLite runs in WAL mode, so include the `-wal` and `-shm` files or stop the service before taking a copy. `GET /healthz` returns the running version.
+Back up both the SQLite database (`db_path`) and the upload directory (`upload_dir`). SQLite runs in WAL mode, so include the `-wal` and `-shm` files or stop the service before taking a copy. `GET /healthz` is a liveness probe and does not disclose the build version.
 
 ## Development
 

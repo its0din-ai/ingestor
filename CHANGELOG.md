@@ -8,6 +8,8 @@ Releases are annotated git tags named `vMAJOR.MINOR.PATCH`.
 
 ## [Unreleased]
 
+## [3.13.3] - 2026-11-16
+
 ### Fixed
 
 - Inline-edit saves (`POST /dashboard/api/edit`) now enforce the account storage
